@@ -21,7 +21,8 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 - Validación del `Origin` en peticiones que modifican datos.
 - *Rate limiting* por IP y tipo de ruta: autenticación, IA y general.
 - Los datos del usuario se envían a la IA como datos, nunca como instrucciones. El serial y el propietario del equipo no se envían.
-- Si la IA falla, responde con 503 o 504 y **nunca** con un resultado inventado.
+- Si Gemini falla (sin clave, cuota, clave rechazada, modelo inexistente, tiempo de espera o salida inválida), la API responde 200 con el resultado de las **reglas técnicas** (`provider: "rules"`, `model: "rules-v1"`) y `result.fallback.reason` explica la causa al técnico. Nunca se inventa un veredicto de IA.
+- Los errores de Gemini se registran con el código HTTP y el cuerpo truncado; la clave de API se enmascara y nunca se escribe en los registros.
 
 ## 🧱 Stack
 
@@ -48,7 +49,7 @@ ADMIN_EMAIL=tu@correo.com pnpm admin
 pnpm test
 ```
 
-Cubren el hash de contraseñas, que el registro no pueda asignar roles, la validación de entradas, el esquema de la IA, los errores de Gemini (503/504) y el aislamiento de datos entre usuarios.
+Cubren el hash de contraseñas, que el registro no pueda asignar roles, la validación de entradas, el esquema de la IA, los errores de Gemini y el respaldo con reglas, el registro sin clave, la verificación de salud de Gemini, las reglas técnicas, la migración del catálogo y el aislamiento de datos entre usuarios.
 
 ## 📡 Endpoints principales
 
@@ -62,4 +63,6 @@ Cubren el hash de contraseñas, que el registro no pueda asignar roles, la valid
 | `PATCH` | `/api/analyses/:id/feedback` | Feedback del resultado |
 | `GET` | `/api/analyses/:id/pdf` | Descargar el informe en PDF |
 | `GET` `POST` `PATCH` `DELETE` | `/api/components` | Catálogo (escritura solo admin) |
-| `GET` | `/api/health` · `/api/config` · `/api/dashboard` | Sistema y resumen |
+| `GET` | `/api/health` | `{status, db, gemini}`: base de datos (`SELECT 1`) y estado de Gemini |
+| `GET` | `/api/config` | Configuración pública; `gemini: {status, checkedAt, detail?}` viene de una consulta de metadatos del modelo en caché (5 min si responde, 1 min si falla), sin generar contenido |
+| `GET` | `/api/dashboard` | Resumen del usuario |

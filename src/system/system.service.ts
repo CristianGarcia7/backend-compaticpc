@@ -1,17 +1,37 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type { Request } from "express";
 import { current } from "../common/api.service";
 import { Analyses, db, EquipmentRows } from "../database/data-source";
+import { GeminiHealthService } from "./gemini-health.service";
 @Injectable()
 export class SystemService {
-  health() {
-    return { status: "ok" };
+  constructor(
+    @Inject(GeminiHealthService) private readonly gemini: GeminiHealthService,
+  ) {}
+  // Overridable in tests so they never need a real database.
+  dbCheck = async () => {
+    await db.query("SELECT 1");
+  };
+  async health() {
+    const [dbStatus, gemini] = await Promise.all([
+      this.dbCheck().then(
+        () => "ok" as const,
+        () => "error" as const,
+      ),
+      this.gemini.check(),
+    ]);
+    return {
+      status: dbStatus === "ok" ? "ok" : "error",
+      db: dbStatus,
+      gemini: gemini.status,
+    };
   }
-  config() {
+  async config() {
     return {
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
       demoEnabled: process.env.DEMO_ENABLED === "true",
       model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+      gemini: await this.gemini.check(),
     };
   }
   async dashboard(req: Request) {

@@ -1,6 +1,8 @@
 import {
   ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
@@ -8,9 +10,12 @@ import PDFDocument from "pdfkit";
 import { z } from "zod";
 import {
   AnalysisInput,
+  AnalysisResult,
   askGemini,
   demoResult,
+  geminiModel,
   mergeRules,
+  rulesResult,
 } from "../analyses/gemini.service";
 import { catalogWarnings, evaluateRules, matchCatalog } from "./rules";
 import {
@@ -25,6 +30,7 @@ import {
   db,
   EquipmentRows,
 } from "../database/data-source";
+const logger = new Logger("Analyses");
 @Injectable()
 export class AnalysesService {
   async analyse(req: Request, body: unknown) {
@@ -54,10 +60,30 @@ export class AnalysesService {
     // Rules run first: they feed the prompt and can override the model.
     payload.rules = evaluateRules(payload);
     const warnings = catalogWarnings(payload);
-    const result =
-      input.mode === "demo"
-        ? demoResult(payload)
-        : mergeRules(await askGemini(payload), payload.rules, warnings);
+    let result: AnalysisResult;
+    let provider: "demo" | "gemini" | "rules";
+    let model: string;
+    if (input.mode === "demo") {
+      [result, provider, model] = [demoResult(payload), "demo", "curated-v1"];
+    } else {
+      try {
+        result = mergeRules(await askGemini(payload), payload.rules, warnings);
+        [provider, model] = ["gemini", geminiModel()];
+      } catch (error) {
+        // Fallback, not a dead end: the rules result is still useful evidence.
+        if (!(error instanceof HttpException))
+          logger.error(`Fallo inesperado al consultar Gemini: ${error}`);
+        const reason =
+          error instanceof HttpException
+            ? error.message
+            : "Gemini no pudo completar el análisis por un error interno. Repita el análisis; si persiste, el administrador debe revisar los registros del servidor.";
+        result = {
+          ...rulesResult(payload, payload.rules, warnings),
+          fallback: { reason },
+        };
+        [provider, model] = ["rules", "rules-v1"];
+      }
+    }
     return db.getRepository(Analyses).save({
       ownerId: user.id,
       equipment,
@@ -65,11 +91,8 @@ export class AnalysesService {
       reference: input.reference,
       specifications: input.specifications,
       result,
-      provider: input.mode === "demo" ? "demo" : "gemini",
-      model:
-        input.mode === "demo"
-          ? "curated-v1"
-          : process.env.GEMINI_MODEL || "gemini-3.6-flash",
+      provider,
+      model,
     });
   }
   async history(req: Request) {
@@ -118,6 +141,13 @@ export class AnalysesService {
       doc
         .fillColor("#a35b00")
         .text("DEMOSTRACIÓN / NO GEMINI / DATOS NO VERIFICADOS")
+        .moveDown();
+    if (row.result.fallback?.reason)
+      doc
+        .fillColor("#a35b00")
+        .text(
+          `RESULTADO DE REGLAS TÉCNICAS (Gemini no disponible): ${row.result.fallback.reason}`,
+        )
         .moveDown();
     doc
       .fillColor("#111827")
