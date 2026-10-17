@@ -1,6 +1,6 @@
 # CompatiPC · Backend
 
-API de **CompatiPC**, una herramienta que ayuda a saber si un componente (RAM, disco, procesador, tarjeta gráfica o fuente de poder) es compatible con un equipo antes de comprarlo. El análisis lo hace **Google Gemini** con una respuesta estructurada y validada, y cada resultado se puede descargar en **PDF**.
+API de **CompatiPC**, una herramienta que ayuda a saber si un componente (RAM, disco, procesador, tarjeta gráfica, fuente de poder, batería o cargador) es compatible con un equipo antes de comprarlo. El análisis lo hace **Google Gemini** con una respuesta estructurada y validada, y cada resultado se puede descargar en **PDF**.
 
 Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-compaticpc)
 
@@ -9,9 +9,11 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 - **Registro e inicio de sesión** con sesiones en cookie `httpOnly`; las contraseñas se guardan con `scrypt` y sal.
 - **Equipos**: cada usuario registra sus computadores (marca, modelo y board).
 - **Análisis de compatibilidad con IA**: Gemini devuelve un veredicto (`compatible`, `conditional` o `incompatible`), qué se revisó, los riesgos y las alternativas. La respuesta se valida con **Zod** y se rechaza si no cumple el esquema.
+- **Reglas técnicas deterministas** antes de la IA: generación DDR3/DDR4/DDR5, formato DIMM/SO-DIMM según el tipo de equipo, socket del procesador (también inferido del chipset), capacidad de la fuente frente al TDP estimado, potencia/voltaje/conector del cargador y voltaje/Wh/celdas de la batería. Una regla fallida fuerza el veredicto `incompatible` aunque la IA diga lo contrario, y cada resultado incluye `rules` y `warnings`.
+- **Contraste con el catálogo**: si la referencia coincide con un componente del catálogo (nombre o número de parte), se usa su ficha técnica y se advierte cuando los datos ingresados la contradicen.
 - **Historial y feedback** de análisis, con **exportación a PDF** (pdfkit).
 - **Catálogo de componentes** administrado por usuarios con rol `admin`.
-- **Modo demo** opcional con respuestas locales predefinidas, para mostrar la app sin API key.
+- **Modo demo** opcional que responde solo con las reglas técnicas locales, para mostrar la app sin API key.
 
 ## 🔒 Seguridad
 

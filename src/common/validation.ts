@@ -26,6 +26,8 @@ export const categories = z.enum([
   "Procesador",
   "Tarjeta gráfica",
   "Fuente de poder",
+  "Batería",
+  "Cargador",
 ]);
 export const queryInput = z
   .object({
