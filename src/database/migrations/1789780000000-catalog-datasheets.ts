@@ -236,6 +236,8 @@ export class CatalogDatasheets1789780000000 implements MigrationInterface {
       `ALTER TABLE components ADD COLUMN "datasheetUrl" varchar NULL`,
     );
     // Upsert by name: production rows are corrected in place, demo rows untouched.
+    // components.name has no UNIQUE constraint, so if an admin created duplicate
+    // names, every row with that name receives the corrected values.
     for (const c of catalog) {
       const params = [
         c.name,

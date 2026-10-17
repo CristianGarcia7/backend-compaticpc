@@ -44,7 +44,7 @@ test("SO-DIMM module in a desktop is incompatible", () => {
     equipment: {
       brand: "Dell",
       model: "OptiPlex torre",
-      board: "Chipset B660 DDR4",
+      board: "Chipset B660 DDR4 DIMM",
     },
     category: "RAM",
     reference: "Crucial CT8G4SFRA32A",
@@ -306,4 +306,201 @@ test("confident matches use the exact name or a full part number", () => {
     matchCatalog(realCatalog, "Ryzen 5600X")?.name,
     "AMD Ryzen 5 5600X",
   );
+});
+
+// Regression tests for the PR review findings (B-1 to B-7 and nits).
+test("B-1 charger voltage is read after the charger keyword, not the battery", () => {
+  const equipment = {
+    brand: "HP",
+    model: "ProBook portátil",
+    board: "batería 11.4V 41Wh, cargador 65W 19.5V punta 4.5 mm",
+  };
+  const charger = run({
+    equipment,
+    category: "Cargador",
+    reference: "HP 65W",
+    specifications: "65W 19.5V punta 4.5 mm",
+  });
+  assert.equal(rule(charger.rules, "charger-voltage").status, "pass");
+  assert.equal(charger.verdict, "compatible");
+  const battery = run({
+    equipment,
+    category: "Batería",
+    reference: "HT03XL",
+    specifications: "11.4V 41Wh",
+  });
+  assert.equal(rule(battery.rules, "battery-voltage").status, "pass");
+  const ram = run({
+    equipment: {
+      brand: "HP",
+      model: "portátil",
+      board: "DDR4 SO-DIMM 1.2V, cargador 19.5V",
+    },
+    category: "Cargador",
+    reference: "Genérico",
+    specifications: "65W 19.5V",
+  });
+  assert.equal(rule(ram.rules, "charger-voltage").status, "pass");
+});
+test("B-1 several equipment voltages for the same part are unknown", () => {
+  const { rules } = run({
+    equipment: {
+      brand: "HP",
+      model: "portátil",
+      board: "cargador 19.5V o cargador 20V",
+    },
+    category: "Cargador",
+    reference: "Genérico",
+    specifications: "65W 12V",
+  });
+  assert.equal(rule(rules, "charger-voltage").status, "unknown");
+});
+test("B-2 compact desktops without a stated slot type are not a hard fail", () => {
+  for (const board of [
+    "ASRock DeskMini B760 mini-ITX",
+    "Dell OptiPlex Micro",
+    "Intel NUC 12",
+  ]) {
+    const { rules, verdict } = run({
+      equipment: { brand: "Varios", model: "Equipo", board },
+      category: "RAM",
+      reference: "Crucial CT8G4SFRA32A",
+      specifications: "SO-DIMM DDR4 8GB",
+    });
+    assert.notEqual(rule(rules, "ram-form-factor").status, "fail", board);
+    assert.notEqual(verdict, "incompatible", board);
+  }
+});
+test("B-2 an inferred desktop only warns about SO-DIMM", () => {
+  const { rules } = run({
+    equipment: { brand: "Dell", model: "torre", board: "B660 DDR4" },
+    category: "RAM",
+    reference: "Módulo",
+    specifications: "SO-DIMM DDR4 8GB",
+  });
+  assert.equal(rule(rules, "ram-form-factor").status, "warn");
+});
+test("B-2 laptop model codes are not read as desktop chipsets", () => {
+  const { rules } = run({
+    equipment: { brand: "ASUS", model: "VivoBook X570ZD", board: "DDR4" },
+    category: "Procesador",
+    reference: "Ryzen",
+    specifications: "Socket AM4",
+  });
+  assert.equal(rule(rules, "cpu-socket").status, "unknown");
+});
+test("B-3 an explicit socket wins over other socket mentions", () => {
+  const { rules } = run({
+    equipment: { brand: "MSI", model: "PC", board: "MSI B650 TOMAHAWK AM5" },
+    category: "Procesador",
+    reference: "Ryzen 5 7600",
+    specifications: "Disipador compatible AM4 y AM5; socket AM5",
+  });
+  assert.equal(rule(rules, "cpu-socket").status, "pass");
+  const ambiguous = run({
+    equipment: { brand: "MSI", model: "PC", board: "B650" },
+    category: "Procesador",
+    reference: "Ryzen",
+    specifications: "Compatible AM4 y AM5",
+  });
+  assert.equal(rule(ambiguous.rules, "cpu-socket").status, "unknown");
+});
+test("B-4 a PSU inside the 30 % margin warns instead of failing", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX, CPU Core i9-13900K 253W, GPU RTX 4090 450W",
+    },
+    category: "Fuente de poder",
+    reference: "1000W",
+    specifications: "1000W 80 Plus Gold",
+  });
+  assert.equal(rule(rules, "psu-capacity").status, "warn");
+  assert.equal(verdict, "conditional");
+});
+test("B-5 a CPU TDP is never used as the charger requirement", () => {
+  const { rules } = run({
+    equipment: {
+      brand: "Dell",
+      model: "portátil",
+      board: "Core i7-1165G7 28W",
+    },
+    category: "Cargador",
+    reference: "Genérico",
+    specifications: "45W USB-C",
+  });
+  assert.equal(rule(rules, "charger-power").status, "unknown");
+});
+test("B-6 included tip adapters count and inner diameters are compared", () => {
+  const hp = {
+    name: "HP 65W Smart AC Adapter H6Y89AA",
+    category: "Cargador",
+    specifications:
+      "Cargador 65W, conector de punta 4.5 mm en ángulo recto; incluye adaptador a punta de 7.4 mm; cable de 180 cm",
+    source: "Ficha técnica oficial HP",
+    datasheetUrl: null,
+  };
+  const adapter = run({
+    equipment: {
+      brand: "HP",
+      model: "portátil",
+      board: "cargador 65W punta 7.4 mm",
+    },
+    category: "Cargador",
+    reference: "H6Y89AA",
+    specifications: "",
+    catalog: hp,
+  });
+  assert.equal(rule(adapter.rules, "charger-connector").status, "pass");
+  const inner = run({
+    equipment: {
+      brand: "HP",
+      model: "portátil",
+      board: "cargador 65W punta 4.5x3.0mm",
+    },
+    category: "Cargador",
+    reference: "Genérico",
+    specifications: "65W punta 4.5x2.5mm",
+  });
+  assert.equal(rule(inner.rules, "charger-connector").status, "fail");
+});
+test("B-7 a family token does not bind a different capacity SKU", () => {
+  const rows = [
+    {
+      name: "Crucial MX500 CT1000MX500SSD1",
+      category: "Almacenamiento",
+      specifications: "SSD SATA 1TB",
+      source: "Ficha técnica oficial Crucial",
+      datasheetUrl: null,
+    },
+  ];
+  assert.equal(matchCatalog(rows, "Crucial MX500 500GB CT500MX500SSD1"), null);
+  assert.equal(matchCatalog(rows, "CT1000MX500SSD1")?.name, rows[0].name);
+});
+test("nit: 'comparte' is not a part number label", () => {
+  const { rules } = run({
+    equipment: {
+      brand: "Dell",
+      model: "portátil",
+      board: "Batería 11.4V; comparte chasis",
+    },
+    category: "Batería",
+    reference: "Batería",
+    specifications: "11.4V",
+  });
+  assert.equal(rule(rules, "battery-part"), undefined);
+});
+test("nit: 'sin PD' is not read as USB-C", () => {
+  const { rules } = run({
+    equipment: {
+      brand: "HP",
+      model: "portátil",
+      board: "cargador 65W punta 4.5 mm",
+    },
+    category: "Cargador",
+    reference: "Genérico",
+    specifications: "65W sin PD, punta 4.5 mm",
+  });
+  assert.equal(rule(rules, "charger-connector").status, "pass");
 });

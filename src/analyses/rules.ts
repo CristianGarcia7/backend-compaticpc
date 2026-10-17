@@ -37,7 +37,7 @@ for (const [socket, chipsets] of Object.entries({
 const CHIPSET_RE = new RegExp(
   `(?<![A-Z0-9])(${Object.keys(DESKTOP_CHIPSETS)
     .sort((a, b) => b.length - a.length)
-    .join("|")})(?![0-9])`,
+    .join("|")})(?:M|I)?(?![0-9A-Z])`,
   "i",
 );
 function equipmentText(input: RuleInput) {
@@ -80,10 +80,14 @@ export function formFactor(text: string): "SO-DIMM" | "DIMM" | null {
   if (/(?<![A-Z-])(U|R)?DIMM\b/i.test(text)) return "DIMM";
   return null;
 }
+// Compact desktops (mini-ITX, Micro, NUC, Tiny, SFF) often use SO-DIMM.
+const COMPACT_RE =
+  /DeskMini|mini-?ITX|\bITX\b|\bmini\b|\bmicro\b|\bNUC\b|\bTiny\b|\bU?SFF\b/i;
 export function equipmentType(text: string): "laptop" | "desktop" | null {
   const laptop =
     /laptop|port[aá]til|notebook|ultrabook|chromebook/i.test(text) ||
     formFactor(text) === "SO-DIMM";
+  if (!laptop && COMPACT_RE.test(text) && !formFactor(text)) return null;
   const desktop =
     /escritorio|desktop|torre|\b(micro-?|mini-?|e-?)?ATX\b|\bITX\b/i.test(
       text,
@@ -93,12 +97,20 @@ export function equipmentType(text: string): "laptop" | "desktop" | null {
   if (laptop === desktop) return null;
   return laptop ? "laptop" : "desktop";
 }
+const SOCKET = "(AM[45]|LGA\\s?-?(1700|1851|1200|1151))";
+const socketName = (m: RegExpMatchArray) =>
+  m[2] ? `LGA${m[2]}` : m[1].toUpperCase();
+// One socket only: an explicit "socket X" wins; several mentions are unknown.
 export function socketOf(text: string): string | null {
-  const explicit = text.match(/\b(AM[45]|LGA\s?-?(1700|1851|1200|1151))\b/i);
-  if (explicit)
-    return explicit[2] ? `LGA${explicit[2]}` : explicit[1].toUpperCase();
-  const chipset = text.match(CHIPSET_RE);
-  return chipset ? DESKTOP_CHIPSETS[chipset[1].toUpperCase()] : null;
+  const declared = text.match(new RegExp(`socket\\s*:?\\s*${SOCKET}\\b`, "i"));
+  if (declared) return socketName(declared);
+  const found = new Set<string>();
+  for (const m of text.matchAll(new RegExp(`\\b${SOCKET}\\b`, "gi")))
+    found.add(socketName(m));
+  if (!found.size)
+    for (const m of text.matchAll(new RegExp(CHIPSET_RE.source, "gi")))
+      found.add(DESKTOP_CHIPSETS[m[1].toUpperCase()]);
+  return found.size === 1 ? [...found][0] : null;
 }
 function wattsAfter(keywords: string, text: string) {
   const m = text.match(
@@ -124,17 +136,65 @@ export function voltage(text: string) {
   const m = text.match(/\b(\d{1,2}(?:[.,]\d{1,2})?)\s?V\b/i);
   return m ? num(m[1]) : null;
 }
-export function connector(text: string): string | null {
-  if (/USB[\s-]?C|Type-?C|tipo\s?C|Power Delivery|\bPD\b/i.test(text))
-    return "USB-C";
-  const barrel = text.match(
-    /\b(\d(?:[.,]\d)?)\s?(?:x|×)\s?(\d(?:[.,]\d)?)\s?mm\b/i,
+// Equipment voltage only after a context keyword; several values are unknown.
+function voltageAfter(keywords: string, text: string) {
+  const found = new Set<number>();
+  const re = new RegExp(
+    `(?:${keywords})[^,;\\n]*?\\b(\\d{1,2}(?:[.,]\\d{1,2})?)\\s?V\\b`,
+    "gi",
   );
-  if (barrel) return `${num(barrel[1])} mm`;
-  const tip = text.match(
-    /(?:punta|barrel|jack|conector)[^,;\n]*?\b(\d(?:[.,]\d)?)\s?mm\b/i,
-  );
-  return tip ? `${num(tip[1])} mm` : null;
+  for (const m of text.matchAll(re)) found.add(num(m[1]));
+  return found.size === 1 ? [...found][0] : null;
+}
+const CHARGER_KEYWORDS = "cargador|adaptador|charger|adapter|entrada DC|DC-?in";
+const BATTERY_KEYWORDS = "bater[ií]a|battery";
+export interface Plug {
+  kind: "USB-C" | "barrel";
+  outer?: number;
+  inner?: number;
+}
+function usbC(text: string) {
+  for (const m of text.matchAll(
+    /USB[\s-]?C|Type-?C|tipo\s?C|Power Delivery|\bPD\b/gi,
+  ))
+    if (!/\b(sin|no|without)\s+$/i.test(text.slice(0, m.index))) return true;
+  return false;
+}
+// Every connector option mentioned, including tip adapters in the box.
+export function connectors(text: string): Plug[] {
+  const plugs: Plug[] = usbC(text) ? [{ kind: "USB-C" }] : [];
+  const barrel = /\b(\d(?:[.,]\d)?)\s?(?:x|×)\s?(\d(?:[.,]\d)?)\s?mm\b/gi;
+  for (const m of text.matchAll(barrel))
+    plugs.push({ kind: "barrel", outer: num(m[1]), inner: num(m[2]) });
+  const rest = text.replace(barrel, " ");
+  for (const m of rest.matchAll(
+    /(?:punta|barrel|jack|conector)[^,;\n]*?\b(\d(?:[.,]\d)?)\s?mm\b/gi,
+  ))
+    plugs.push({ kind: "barrel", outer: num(m[1]) });
+  return plugs;
+}
+export function plugLabel(p: Plug) {
+  return p.kind === "USB-C"
+    ? "USB-C"
+    : `punta ${p.outer}${p.inner ? ` x ${p.inner}` : ""} mm`;
+}
+// "exact" when everything known matches, "partial" when an inner size is missing.
+function plugMatch(a: Plug, b: Plug): "exact" | "partial" | null {
+  if (a.kind !== b.kind) return null;
+  if (a.kind === "USB-C") return "exact";
+  if (a.outer !== b.outer) return null;
+  if (a.inner && b.inner) return a.inner === b.inner ? "exact" : null;
+  return a.inner || b.inner ? "partial" : "exact";
+}
+function bestPlugMatch(plugs: Plug[], sockets: Plug[]) {
+  let best: "exact" | "partial" | null = null;
+  for (const p of plugs)
+    for (const s of sockets) {
+      const m = plugMatch(p, s);
+      if (m === "exact") return m;
+      best ??= m;
+    }
+  return best;
 }
 function wattHours(text: string) {
   const m = text.match(/\b(\d{2,3}(?:[.,]\d)?)\s?Wh\b/i);
@@ -196,37 +256,47 @@ function ramRules(input: RuleInput): RuleResult[] {
       module.source,
     );
   const ff = componentFact(input, formFactor);
+  const slot = formFactor(eq);
   const type = equipmentType(eq);
+  // Only a slot type stated for the equipment itself justifies a hard fail.
+  const expected = slot ?? (type === "laptop" ? "SO-DIMM" : type && "DIMM");
   let shape: RuleResult;
-  if (!ff || !type)
+  if (!ff || !expected)
     shape = rule(
       "ram-form-factor",
       "Formato del módulo",
       "unknown",
       ff
-        ? "No se pudo determinar si el equipo es portátil o de escritorio."
+        ? "No se pudo determinar qué tipo de ranura usa el equipo. Indique DIMM o SO-DIMM en los datos del equipo."
         : "No se indicó si el módulo es DIMM (escritorio) o SO-DIMM (portátil).",
       ff?.source,
     );
-  else {
-    const expected = type === "laptop" ? "SO-DIMM" : "DIMM";
-    shape =
-      ff.value === expected
-        ? rule(
-            "ram-form-factor",
-            "Formato del módulo",
-            "pass",
-            `${ff.value} corresponde a un equipo ${type === "laptop" ? "portátil" : "de escritorio"}.`,
-            ff.source,
-          )
-        : rule(
-            "ram-form-factor",
-            "Formato del módulo",
-            "fail",
-            `El módulo es ${ff.value}, pero un equipo ${type === "laptop" ? "portátil" : "de escritorio"} usa ${expected}. No encaja físicamente.`,
-            ff.source,
-          );
-  }
+  else if (ff.value === expected)
+    shape = rule(
+      "ram-form-factor",
+      "Formato del módulo",
+      "pass",
+      slot
+        ? `El módulo ${ff.value} coincide con la ranura ${slot} del equipo.`
+        : `${ff.value} corresponde a un equipo ${type === "laptop" ? "portátil" : "de escritorio"}.`,
+      ff.source,
+    );
+  else
+    shape = slot
+      ? rule(
+          "ram-form-factor",
+          "Formato del módulo",
+          "fail",
+          `El módulo es ${ff.value}, pero el equipo usa ranuras ${slot}. No encaja físicamente.`,
+          ff.source,
+        )
+      : rule(
+          "ram-form-factor",
+          "Formato del módulo",
+          "warn",
+          `El módulo es ${ff.value} y el equipo parece ${type === "laptop" ? "portátil" : "de escritorio"}, que suele usar ${expected}. Confirme el tipo de ranura en el manual antes de comprar.`,
+          ff.source,
+        );
   return [generation, shape];
 }
 function cpuRules(input: RuleInput): RuleResult[] {
@@ -283,15 +353,27 @@ function psuRules(input: RuleInput): RuleResult[] {
     ];
   const cpu = load.cpu?.watts ?? 0;
   const gpu = load.gpu?.watts ?? 0;
-  const required = Math.ceil((cpu + gpu + 100) * 1.3);
-  const estimate = `CPU ${load.cpu ? `${cpu} W` : "sin dato"} + GPU ${load.gpu ? `${gpu} W` : "sin dato"} + 100 W base, con 30 % de margen = ${required} W`;
-  if (psu.value < required)
+  const raw = cpu + gpu + 100;
+  const required = Math.ceil(raw * 1.3);
+  const estimate = `CPU ${load.cpu ? `${cpu} W` : "sin dato"} + GPU ${load.gpu ? `${gpu} W` : "sin dato"} + 100 W base = ${raw} W; recomendado con 30 % de margen: ${required} W`;
+  // Below the raw sum is a clear failure; inside the margin only a warning.
+  if (psu.value < raw)
     return [
       rule(
         "psu-capacity",
         "Capacidad de la fuente",
         "fail",
         `La fuente de ${psu.value} W no alcanza el consumo estimado (${estimate}).`,
+        psu.source,
+      ),
+    ];
+  if (psu.value < required)
+    return [
+      rule(
+        "psu-capacity",
+        "Capacidad de la fuente",
+        "warn",
+        `La fuente de ${psu.value} W cubre el consumo estimado, pero sin el margen recomendado (${estimate}). Bajo picos de carga puede apagarse.`,
         psu.source,
       ),
     ];
@@ -305,12 +387,13 @@ function psuRules(input: RuleInput): RuleResult[] {
     ),
   ];
 }
+// No keyword, no requirement: a bare "28W" is usually the CPU TDP.
 function requiredWatts(text: string) {
   return (
     wattsAfter(
       "cargador|adaptador|charger|adapter|alimentaci[oó]n|requiere|potencia",
       text,
-    )?.watts ?? firstWatts(text)
+    )?.watts ?? null
   );
 }
 function chargerRules(input: RuleInput): RuleResult[] {
@@ -341,10 +424,17 @@ function chargerRules(input: RuleInput): RuleResult[] {
             `El cargador entrega ${watts.value} W y el equipo requiere ${need} W.`,
             watts.source,
           );
-  const plug = componentFact(input, connector);
-  const socket = connector(eq);
+  const plug = componentFact(input, (t) => {
+    const found = connectors(t);
+    return found.length ? found : null;
+  });
+  const sockets = connectors(eq);
+  const match =
+    plug && sockets.length ? bestPlugMatch(plug.value, sockets) : null;
+  const plugText = plug?.value.map(plugLabel).join(" o ");
+  const socketText = sockets.map(plugLabel).join(" o ");
   const plugRule =
-    !plug || !socket
+    !plug || !sockets.length
       ? rule(
           "charger-connector",
           "Conector",
@@ -355,16 +445,21 @@ function chargerRules(input: RuleInput): RuleResult[] {
       : rule(
           "charger-connector",
           "Conector",
-          plug.value === socket ? "pass" : "fail",
-          plug.value === socket
-            ? `Ambos usan conector ${socket}.`
-            : `El cargador usa ${plug.value} y el equipo ${socket}. El conector no coincide.`,
+          match === "exact" ? "pass" : match ? "warn" : "fail",
+          match === "exact"
+            ? `El conector coincide (${socketText}).`
+            : match
+              ? `El diámetro exterior coincide (${socketText}), pero falta el diámetro interior de uno de los dos. Confírmelo antes de conectar.`
+              : `El cargador usa ${plugText} y el equipo ${socketText}. El conector no coincide.`,
           plug.source,
         );
   let volts: RuleResult;
   const v = componentFact(input, voltage);
-  const needV = voltage(eq);
-  if (plug?.value === "USB-C" && socket === "USB-C")
+  const needV = voltageAfter(CHARGER_KEYWORDS, eq);
+  const usbBoth =
+    plug?.value.some((p) => p.kind === "USB-C") &&
+    sockets.some((p) => p.kind === "USB-C");
+  if (plug && usbBoth)
     volts = rule(
       "charger-voltage",
       "Voltaje",
@@ -396,7 +491,7 @@ function batteryRules(input: RuleInput): RuleResult[] {
   const eq = equipmentText(input);
   const rules: RuleResult[] = [];
   const v = componentFact(input, voltage);
-  const needV = voltage(eq);
+  const needV = voltageAfter(BATTERY_KEYWORDS, eq);
   rules.push(
     !v || !needV
       ? rule(
@@ -445,7 +540,7 @@ function batteryRules(input: RuleInput): RuleResult[] {
       ),
     );
   const part = eq.match(
-    /(?:P\/N|n[uú]mero de parte|parte|part(?:\s?number)?)\s*:?\s*([A-Z0-9][A-Z0-9-]{3,})/i,
+    /\b(?:P\/N|n[uú]mero de parte|parte|part(?:\s?number)?)\b\s*:?\s*([A-Z0-9][A-Z0-9-]{3,})/i,
   );
   if (part) {
     const target = normalize(part[1]);
@@ -512,9 +607,22 @@ export function matchCatalog<T extends CatalogComponent>(
   // Only confident matches bind a spec sheet; ambiguity falls back to user data.
   const exact = real.filter((r) => normalize(r.name) === ref);
   if (exact.length) return exact.length === 1 ? exact[0] : null;
-  const byPart = real.filter((r) =>
-    partNumbers(r.name).some((p) => ref.includes(p)),
-  );
+  // A row token must be a whole word of the reference, and must not be a
+  // fragment of a longer, different model code typed by the user
+  // (e.g. "MX500" inside "CT500MX500SSD1" is not the 1TB "CT1000MX500SSD1").
+  const words = reference.split(/\s+/).map(normalize).filter(Boolean);
+  const codes = partNumbers(reference);
+  const byPart = real.filter((r) => {
+    const tokens = partNumbers(r.name);
+    const hits = tokens.filter((t) => words.includes(t));
+    return (
+      hits.length > 0 &&
+      !codes.some(
+        (c) =>
+          !tokens.includes(c) && hits.some((h) => c !== h && c.includes(h)),
+      )
+    );
+  });
   return byPart.length === 1 ? byPart[0] : null;
 }
 // Spanish warnings when the typed data contradicts the matched spec sheet.
@@ -542,7 +650,16 @@ export function catalogWarnings(input: RuleInput): string[] {
   compare("la generación", ramGeneration(sheet), ramGeneration(typed));
   compare("el formato", formFactor(sheet), formFactor(typed));
   compare("el socket", socketOf(sheet), socketOf(typed));
-  compare("el conector", connector(sheet), connector(typed));
+  const sheetPlugs = connectors(sheet);
+  const typedPlugs = connectors(typed);
+  if (
+    sheetPlugs.length &&
+    typedPlugs.length &&
+    !bestPlugMatch(sheetPlugs, typedPlugs)
+  )
+    warnings.push(
+      `${intro} el conector ${sheetPlugs.map(plugLabel).join(" o ")}, pero usted indicó ${typedPlugs.map(plugLabel).join(" o ")}. Verifique la etiqueta del componente antes de continuar.`,
+    );
   if (["Fuente de poder", "Cargador"].includes(input.category))
     compare("la potencia (W)", firstWatts(sheet), firstWatts(typed));
   if (["Cargador", "Batería"].includes(input.category))
