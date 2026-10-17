@@ -509,14 +509,13 @@ export function matchCatalog<T extends CatalogComponent>(
   const ref = normalize(reference);
   if (ref.length < 3) return null;
   const real = rows.filter((r) => !/^DEMOSTRACI[OÓ]N/i.test(r.source));
-  return (
-    real.find((r) => normalize(r.name) === ref) ??
-    real.find((r) => partNumbers(r.name).some((p) => ref.includes(p))) ??
-    (ref.length >= 8
-      ? real.find((r) => normalize(r.name).includes(ref))
-      : undefined) ??
-    null
+  // Only confident matches bind a spec sheet; ambiguity falls back to user data.
+  const exact = real.filter((r) => normalize(r.name) === ref);
+  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  const byPart = real.filter((r) =>
+    partNumbers(r.name).some((p) => ref.includes(p)),
   );
+  return byPart.length === 1 ? byPart[0] : null;
 }
 // Spanish warnings when the typed data contradicts the matched spec sheet.
 export function catalogWarnings(input: RuleInput): string[] {

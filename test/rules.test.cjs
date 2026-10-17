@@ -253,3 +253,57 @@ test("catalog datasheet facts drive rules and contradictions become warnings", (
     0,
   );
 });
+const realCatalog = [
+  catalog[0],
+  {
+    name: "Kingston FURY Impact KF556S40IB-16",
+    category: "RAM",
+    specifications: "SO-DIMM DDR5 (portátil), 16GB, 5600MHz, CL40, 1.1V",
+    source: "Ficha técnica oficial Kingston",
+    datasheetUrl: null,
+  },
+  {
+    name: "AMD Ryzen 5 5600X",
+    category: "Procesador",
+    specifications: "Socket AM4, 6 núcleos / 12 hilos, TDP 65W",
+    source: "Ficha técnica oficial AMD",
+    datasheetUrl: null,
+  },
+];
+test("generic references never bind a catalog row by substring", () => {
+  const reference = "AMD Ryzen 5";
+  const match = matchCatalog(realCatalog, reference);
+  assert.equal(match, null);
+  const input = {
+    equipment: { brand: "MSI", model: "PC", board: "MSI B650 TOMAHAWK" },
+    category: "Procesador",
+    reference,
+    specifications: "Ryzen 5 7600, socket AM5",
+    catalog: match,
+  };
+  const rules = evaluateRules(input);
+  assert.equal(rule(rules, "cpu-socket").status, "pass");
+  assert.notEqual(rulesVerdict(rules), "incompatible");
+  assert.deepEqual(catalogWarnings(input), []);
+});
+test("ambiguous references return no catalog match", () => {
+  assert.equal(matchCatalog(realCatalog, "Kingston FURY"), null);
+  assert.equal(
+    matchCatalog(realCatalog, "Kingston KF432C16BB1/8 o KF556S40IB-16"),
+    null,
+  );
+});
+test("confident matches use the exact name or a full part number", () => {
+  assert.equal(
+    matchCatalog(realCatalog, "Kingston FURY Beast KF432C16BB1/8")?.name,
+    realCatalog[0].name,
+  );
+  assert.equal(
+    matchCatalog(realCatalog, "amd ryzen 5 5600x")?.name,
+    "AMD Ryzen 5 5600X",
+  );
+  assert.equal(
+    matchCatalog(realCatalog, "Ryzen 5600X")?.name,
+    "AMD Ryzen 5 5600X",
+  );
+});
