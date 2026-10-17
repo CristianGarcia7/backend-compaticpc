@@ -7,7 +7,6 @@ import {
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import PDFDocument from "pdfkit";
-import { z } from "zod";
 import {
   AnalysisInput,
   AnalysisResult,
@@ -20,6 +19,7 @@ import {
 import { catalogWarnings, evaluateRules, matchCatalog } from "./rules";
 import {
   current,
+  feedbackInput,
   ownedAnalysis,
   parse,
   queryInput,
@@ -116,11 +116,13 @@ export class AnalysesService {
   }
   async feedback(req: Request, id: string, body: unknown) {
     const row = await ownedAnalysis(req, id);
-    const input = parse(
-      z.object({ feedback: z.enum(["useful", "not-useful"]) }).strict(),
-      body,
-    );
-    return db.getRepository(Analyses).save({ ...row, ...input });
+    const input = parse(feedbackInput, body);
+    // A new rating replaces the previous reason, even when none is given.
+    return db.getRepository(Analyses).save({
+      ...row,
+      feedback: input.feedback,
+      feedbackReason: input.reason || null,
+    });
   }
   async pdf(req: Request, id: string, res: Response) {
     const row = await ownedAnalysis(req, id);

@@ -5,6 +5,7 @@ import {
   Get,
   Inject,
   Param,
+  Patch,
   Post,
   Req,
 } from "@nestjs/common";
@@ -23,6 +24,13 @@ export class EquipmentController {
     @Body() body: unknown,
   ) {
     return this.service.createEquipment(req, body);
+  }
+  @Patch("equipment/:id") async updateEquipment(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return this.service.updateEquipment(req, id, body);
   }
   @Delete("equipment/:id") async deleteEquipment(
     @Req() req: Request,

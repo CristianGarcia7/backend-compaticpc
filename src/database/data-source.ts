@@ -10,12 +10,17 @@ import {
 } from "./entities";
 import { Initial1789770000000 } from "./migrations/1789770000000-initial";
 import { CatalogDatasheets1789780000000 } from "./migrations/1789780000000-catalog-datasheets";
+import { FeedbackReason1789790000000 } from "./migrations/1789790000000-feedback-reason";
 export * from "./entities";
 export const db = new DataSource({
   type: "postgres",
   url: process.env.DATABASE_URL,
   entities: [Users, EquipmentRows, Components, Analyses, Sessions],
-  migrations: [Initial1789770000000, CatalogDatasheets1789780000000],
+  migrations: [
+    Initial1789770000000,
+    CatalogDatasheets1789780000000,
+    FeedbackReason1789790000000,
+  ],
   synchronize: false,
   logging: false,
 });

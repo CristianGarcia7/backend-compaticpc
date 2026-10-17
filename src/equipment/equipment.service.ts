@@ -3,6 +3,7 @@ import type { Request } from "express";
 import {
   current,
   equipmentInput,
+  equipmentUpdate,
   identifier,
   parse,
 } from "../common/api.service";
@@ -22,6 +23,13 @@ export class EquipmentService {
     return db
       .getRepository(EquipmentRows)
       .save({ ...parse(equipmentInput, body), ownerId: user.id });
+  }
+  async updateEquipment(req: Request, id: string, body: unknown) {
+    const user = await current(req);
+    const repo = db.getRepository(EquipmentRows);
+    const row = await repo.findOneBy({ id: identifier(id), ownerId: user.id });
+    if (!row) throw new NotFoundException("Equipo no encontrado.");
+    return repo.save({ ...row, ...parse(equipmentUpdate, body) });
   }
   async deleteEquipment(req: Request, id: string) {
     const user = await current(req);

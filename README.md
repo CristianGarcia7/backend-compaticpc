@@ -7,7 +7,7 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 ## ✨ Funcionalidades
 
 - **Registro e inicio de sesión** con sesiones en cookie `httpOnly`; las contraseñas se guardan con `scrypt` y sal.
-- **Equipos**: cada usuario registra sus computadores (marca, modelo y board).
+- **Equipos**: cada usuario registra y edita sus computadores (marca, modelo y board).
 - **Análisis de compatibilidad con IA**: Gemini devuelve un veredicto (`compatible`, `conditional` o `incompatible`), qué se revisó, los riesgos y las alternativas. La respuesta se valida con **Zod** y se rechaza si no cumple el esquema.
 - **Reglas técnicas deterministas** antes de la IA: generación DDR3/DDR4/DDR5, formato DIMM/SO-DIMM según el tipo de equipo, socket del procesador (también inferido del chipset), capacidad de la fuente frente al TDP estimado, potencia/voltaje/conector del cargador y voltaje/Wh/celdas de la batería. Una regla fallida fuerza el veredicto `incompatible` aunque la IA diga lo contrario, y cada resultado incluye `rules` y `warnings`.
 - **Contraste con el catálogo**: si la referencia coincide con un componente del catálogo (nombre o número de parte), se usa su ficha técnica y se advierte cuando los datos ingresados la contradicen.
@@ -57,10 +57,11 @@ Cubren el hash de contraseñas, que el registro no pueda asignar roles, la valid
 |---|---|---|
 | `POST` | `/api/auth/register` · `/login` · `/logout` | Autenticación |
 | `GET` | `/api/auth/me` | Usuario actual |
-| `GET` `POST` `DELETE` | `/api/equipment` | Equipos del usuario |
+| `GET` `POST` | `/api/equipment` | Equipos del usuario |
+| `PATCH` `DELETE` | `/api/equipment/:id` | Editar (`{brand?, model?, board?, serial?}`) o eliminar un equipo propio |
 | `POST` | `/api/analyses` | Nuevo análisis de compatibilidad |
 | `GET` | `/api/analyses` · `/api/analyses/:id` | Historial y detalle |
-| `PATCH` | `/api/analyses/:id/feedback` | Feedback del resultado |
+| `PATCH` | `/api/analyses/:id/feedback` | Feedback del resultado: `{feedback: "useful" \| "not-useful", reason?}` (motivo opcional de hasta 500 caracteres, guardado en `feedbackReason`) |
 | `GET` | `/api/analyses/:id/pdf` | Descargar el informe en PDF |
 | `GET` `POST` `PATCH` `DELETE` | `/api/components` | Catálogo (escritura solo admin) |
 | `GET` | `/api/health` | `{status, db, gemini}`: base de datos (`SELECT 1`) y estado de Gemini |

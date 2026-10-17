@@ -18,7 +18,10 @@ function runner() {
 }
 test("catalog migration is registered after the initial migration", () => {
   const names = db.options.migrations.map((m) => m.name);
-  assert.deepEqual(names.slice(-1), ["CatalogDatasheets1789780000000"]);
+  assert.ok(
+    names.indexOf("CatalogDatasheets1789780000000") >
+      names.indexOf("Initial1789770000000"),
+  );
 });
 test("up adds datasheetUrl and upserts rows by name", async () => {
   const q = runner();
