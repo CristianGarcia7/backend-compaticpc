@@ -12,7 +12,7 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 - **Reglas técnicas deterministas** antes de la IA: generación DDR3/DDR4/DDR5, formato DIMM/SO-DIMM según el tipo de equipo, socket del procesador (también inferido del chipset), capacidad de la fuente frente al TDP estimado, potencia/voltaje/conector del cargador y voltaje/Wh/celdas de la batería. Una regla fallida fuerza el veredicto `incompatible` aunque la IA diga lo contrario, y cada resultado incluye `rules` y `warnings`.
 - **Contraste con el catálogo**: si la referencia coincide con un componente del catálogo (nombre o número de parte), se usa su ficha técnica y se advierte cuando los datos ingresados la contradicen.
 - **Historial y feedback** de análisis, con **exportación a PDF** (pdfkit).
-- **Catálogo de componentes** administrado por usuarios con rol `admin`.
+- **Catálogo de componentes** administrado por usuarios con rol `admin`. Cada componente puede enlazar su ficha oficial (`datasheetUrl`); la migración `1789780000000-catalog-datasheets` corrige el catálogo existente por nombre (por ejemplo, la Kingston KF432C16BB1/8 es DIMM de escritorio) y añade cargadores y baterías reales.
 - **Modo demo** opcional que responde solo con las reglas técnicas locales, para mostrar la app sin API key.
 
 ## 🔒 Seguridad

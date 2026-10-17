@@ -21,6 +21,7 @@ export interface Component {
   category: string;
   specifications: string;
   source: string;
+  datasheetUrl: string | null;
 }
 export interface Analysis {
   id: string;
@@ -75,6 +76,7 @@ export const Components = new EntitySchema<Component>({
     category: { type: String },
     specifications: { type: String },
     source: { type: String },
+    datasheetUrl: { type: String, nullable: true },
   },
 });
 export const Analyses = new EntitySchema<Analysis>({
