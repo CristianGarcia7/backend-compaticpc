@@ -19,7 +19,7 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 
 - `helmet`, límite de 24 KB por petición y `Cache-Control: no-store`.
 - Validación del `Origin` en peticiones que modifican datos.
-- *Rate limiting* por IP y tipo de ruta: autenticación, IA y general.
+- _Rate limiting_ por IP y tipo de ruta: autenticación, IA y general.
 - Los datos del usuario se envían a la IA como datos, nunca como instrucciones. El serial y el propietario del equipo no se envían.
 - Si Gemini falla (sin clave, cuota, clave rechazada, modelo inexistente, tiempo de espera o salida inválida), la API responde 200 con el resultado de las **reglas técnicas** (`provider: "rules"`, `model: "rules-v1"`) y `result.fallback.reason` explica la causa al técnico. Nunca se inventa un veredicto de IA.
 - Los errores de Gemini se registran con el código HTTP y el cuerpo truncado; la clave de API se enmascara y nunca se escribe en los registros.
@@ -53,17 +53,17 @@ Cubren el hash de contraseñas, que el registro no pueda asignar roles, la valid
 
 ## 📡 Endpoints principales
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/auth/register` · `/login` · `/logout` | Autenticación |
-| `GET` | `/api/auth/me` | Usuario actual |
-| `GET` `POST` | `/api/equipment` | Equipos del usuario |
-| `PATCH` `DELETE` | `/api/equipment/:id` | Editar (`{brand?, model?, board?, serial?}`) o eliminar un equipo propio |
-| `POST` | `/api/analyses` | Nuevo análisis de compatibilidad |
-| `GET` | `/api/analyses` · `/api/analyses/:id` | Historial y detalle |
-| `PATCH` | `/api/analyses/:id/feedback` | Feedback del resultado: `{feedback: "useful" \| "not-useful", reason?}` (motivo opcional de hasta 500 caracteres, guardado en `feedbackReason`) |
-| `GET` | `/api/analyses/:id/pdf` | Descargar el informe en PDF |
-| `GET` `POST` `PATCH` `DELETE` | `/api/components` | Catálogo (escritura solo admin) |
-| `GET` | `/api/health` | `{status, db, gemini}`: base de datos (`SELECT 1`) y estado de Gemini |
-| `GET` | `/api/config` | Configuración pública; `gemini: {status, checkedAt, detail?}` viene de una consulta de metadatos del modelo en caché (5 min si responde, 1 min si falla), sin generar contenido |
-| `GET` | `/api/dashboard` | Resumen del usuario |
+| Método                        | Ruta                                        | Descripción                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`                        | `/api/auth/register` · `/login` · `/logout` | Autenticación                                                                                                                                                                   |
+| `GET`                         | `/api/auth/me`                              | Usuario actual                                                                                                                                                                  |
+| `GET` `POST`                  | `/api/equipment`                            | Equipos del usuario                                                                                                                                                             |
+| `PATCH` `DELETE`              | `/api/equipment/:id`                        | Editar (`{brand?, model?, board?, serial?}`) o eliminar un equipo propio                                                                                                        |
+| `POST`                        | `/api/analyses`                             | Nuevo análisis de compatibilidad                                                                                                                                                |
+| `GET`                         | `/api/analyses` · `/api/analyses/:id`       | Historial y detalle                                                                                                                                                             |
+| `PATCH`                       | `/api/analyses/:id/feedback`                | Feedback del resultado: `{feedback: "useful" \| "not-useful", reason?}` (motivo opcional de hasta 500 caracteres, guardado en `feedbackReason`)                                 |
+| `GET`                         | `/api/analyses/:id/pdf`                     | Descargar el informe en PDF                                                                                                                                                     |
+| `GET` `POST` `PATCH` `DELETE` | `/api/components`                           | Catálogo (escritura solo admin)                                                                                                                                                 |
+| `GET`                         | `/api/health`                               | `{status, db, gemini}`: base de datos (`SELECT 1`) y estado de Gemini                                                                                                           |
+| `GET`                         | `/api/config`                               | Configuración pública; `gemini: {status, checkedAt, detail?}` viene de una consulta de metadatos del modelo en caché (5 min si responde, 1 min si falla), sin generar contenido |
+| `GET`                         | `/api/dashboard`                            | Resumen del usuario                                                                                                                                                             |
