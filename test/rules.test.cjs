@@ -744,3 +744,28 @@ test("H3 a drive without form factor or interface is unknown", () => {
   assert.equal(rule(rules, "storage-interface").status, "unknown");
   assert.equal(verdict, "conditional");
 });
+// H4: case B2 of the technical validation (HP battery in a ThinkPad E14 Gen 4).
+test("H4 a Wh-only mismatch warns and asks for the part number and form factor", () => {
+  const { rules, verdict } = run({
+    equipment: thinkpadE14,
+    category: "Batería",
+    reference: "HP HT03XL L11119-855",
+    specifications: "",
+    catalog: {
+      name: "HP HT03XL L11119-855",
+      category: "Batería",
+      specifications:
+        "Batería Li-ion de 3 celdas, 41Wh, 3.6Ah, código HT03XL, número de parte L11119-855",
+      source: "Ficha técnica oficial HP",
+      datasheetUrl: null,
+    },
+  });
+  const capacity = rule(rules, "battery-capacity");
+  assert.equal(capacity.status, "warn");
+  assert.match(capacity.detail, /41 Wh/);
+  assert.match(capacity.detail, /57 Wh/);
+  assert.match(capacity.detail, /número de parte/);
+  assert.match(capacity.detail, /formato/);
+  assert.equal(rule(rules, "battery-voltage").status, "unknown");
+  assert.equal(verdict, "conditional");
+});

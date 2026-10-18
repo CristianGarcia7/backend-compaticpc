@@ -621,7 +621,7 @@ function batteryRules(input: RuleInput): RuleResult[] {
         close(wh.value, needWh, 0.1) ? "pass" : "warn",
         close(wh.value, needWh, 0.1)
           ? `La capacidad de ${wh.value} Wh coincide con la original.`
-          : `La batería tiene ${wh.value} Wh y la original ${needWh} Wh. Una capacidad distinta suele implicar otro tamaño físico.`,
+          : `La batería tiene ${wh.value} Wh y la original ${needWh} Wh. Una capacidad distinta suele indicar otro modelo de batería, con otro tamaño y conector. Verifique el número de parte y el formato en la lista de partes del fabricante del equipo antes de comprar.`,
         wh.source,
       ),
     );
