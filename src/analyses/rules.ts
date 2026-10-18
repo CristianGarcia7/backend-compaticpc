@@ -371,30 +371,34 @@ interface PsuRecommendation {
   label: string;
   source: string;
 }
-// A wattage stated in the data wins; otherwise a known GPU's official figure.
+// Only the equipment text describes the system: the PSU's own sheet often
+// names GPUs it can power ("compatible con RTX 4090"), which is no requirement.
+// When the stated figure and NVIDIA's disagree, the higher one applies.
 function recommendedPsu(input: RuleInput): PsuRecommendation | null {
-  for (const [text, source, who] of [
-    [input.equipment.board, EQUIPMENT_SOURCE, "los datos del equipo"],
-    [input.specifications, USER_SOURCE, "los datos ingresados"],
-  ])
-    for (const re of RECOMMENDED_PSU) {
-      const m = text.match(re);
-      if (m)
-        return {
-          watts: Number(m[1]),
-          label: `la fuente recomendada que indican ${who}`,
-          source,
-        };
+  const board = input.equipment.board;
+  const candidates: PsuRecommendation[] = [];
+  for (const re of RECOMMENDED_PSU) {
+    const m = board.match(re);
+    if (m) {
+      candidates.push({
+        watts: Number(m[1]),
+        label: "la fuente recomendada que indican los datos del equipo",
+        source: EQUIPMENT_SOURCE,
+      });
+      break;
     }
-  const text = `${input.equipment.board}; ${input.specifications}`;
-  const known = GPU_SYSTEM_POWER.filter((g) => g.re.test(text));
-  if (known.length !== 1) return null;
-  const gpu = known[0];
-  return {
-    watts: gpu.watts,
-    label: `la potencia de sistema que exige NVIDIA para la ${gpu.name}`,
-    source: `Especificaciones oficiales ${gpu.name} (${gpu.url})`,
-  };
+  }
+  const known = GPU_SYSTEM_POWER.filter((g) => g.re.test(board));
+  if (known.length === 1)
+    candidates.push({
+      watts: known[0].watts,
+      label: `la potencia de sistema que exige NVIDIA para la ${known[0].name}`,
+      source: `Especificaciones oficiales ${known[0].name} (${known[0].url})`,
+    });
+  return candidates.reduce<PsuRecommendation | null>(
+    (best, c) => (!best || c.watts > best.watts ? c : best),
+    null,
+  );
 }
 function psuRules(input: RuleInput): RuleResult[] {
   const rec = recommendedPsu(input);

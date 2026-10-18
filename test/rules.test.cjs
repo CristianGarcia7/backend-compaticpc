@@ -769,3 +769,41 @@ test("H4 a Wh-only mismatch warns and asks for the part number and form factor",
   assert.equal(rule(rules, "battery-voltage").status, "unknown");
   assert.equal(verdict, "conditional");
 });
+// Review round 1: the PSU's own text never sets the GPU requirement.
+test("R1 a PSU that mentions an RTX 4090 does not impose the 4090 requirement", () => {
+  for (const specifications of [
+    "750W 80 Plus Gold, 12VHPWR compatible con RTX 4090",
+    "750W 80 Plus Gold, PSU recommended 850W",
+  ]) {
+    const { rules, verdict } = run({
+      equipment: {
+        brand: "Personalizado",
+        model: "PC",
+        board: "B650 ATX; CPU Ryzen 5 7600 65 W, GPU RTX 4070 200 W",
+      },
+      category: "Fuente de poder",
+      reference: "Fuente 750W",
+      specifications,
+    });
+    const psu = rule(rules, "psu-capacity");
+    assert.equal(psu.status, "pass", specifications);
+    assert.doesNotMatch(psu.detail, /850 W/, specifications);
+    assert.equal(verdict, "compatible", specifications);
+  }
+});
+test("R1 a lower text recommendation never undercuts NVIDIA's figure", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX; CPU Core i5-12400F 117 W, GPU RTX 4090 450 W, fuente recomendada 650 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "750W",
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.equal(psu.status, "fail");
+  assert.match(psu.detail, /850 W/);
+  assert.equal(verdict, "incompatible");
+});
