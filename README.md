@@ -19,7 +19,8 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 
 - `helmet`, límite de 24 KB por petición y `Cache-Control: no-store`.
 - Validación del `Origin` en peticiones que modifican datos.
-- _Rate limiting_ por IP y tipo de ruta: autenticación, IA y general.
+- _Rate limiting_ por IP y tipo de ruta: autenticación, IA y general. La API confía en un único proxy (`trust proxy 1`, nginx), así que la IP es la del cliente y no la del proxy.
+- Cookie de sesión `HttpOnly`, `SameSite=Lax` y `Secure` cuando `NODE_ENV=production`.
 - Los datos del usuario se envían a la IA como datos, nunca como instrucciones. El serial y el propietario del equipo no se envían.
 - Si Gemini falla (sin clave, cuota, clave rechazada, modelo inexistente, tiempo de espera o salida inválida), la API responde 200 con el resultado de las **reglas técnicas** (`provider: "rules"`, `model: "rules-v1"`) y `result.fallback.reason` explica la causa al técnico. Nunca se inventa un veredicto de IA.
 - Los errores de Gemini se registran con el código HTTP y el cuerpo truncado; la clave de API se enmascara y nunca se escribe en los registros.
