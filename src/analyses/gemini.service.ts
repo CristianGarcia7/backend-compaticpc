@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   GatewayTimeoutException,
+  Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { z } from "zod";
@@ -99,7 +100,26 @@ export function mergeRules(
   warnings: string[],
 ): AnalysisResult {
   const failed = rules.filter((r) => r.status === "fail");
-  if (!failed.length) return { ...gemini, rules, warnings };
+  if (!failed.length) {
+    // Rule warnings or catalog contradictions cap "compatible" at "conditional".
+    const cautions = [
+      ...rules.filter((r) => r.status === "warn").map((r) => r.detail),
+      ...warnings,
+    ];
+    if (gemini.verdict !== "compatible" || !cautions.length)
+      return { ...gemini, rules, warnings };
+    return {
+      ...gemini,
+      verdict: "conditional",
+      summary:
+        `Requiere verificación por advertencias técnicas: ${cautions.join(" ")} ${gemini.summary}`.slice(
+          0,
+          1800,
+        ),
+      rules,
+      warnings,
+    };
+  }
   return {
     ...gemini,
     verdict: "incompatible",
@@ -171,16 +191,36 @@ export function modelPayload(input: AnalysisInput) {
     },
   };
 }
+const logger = new Logger("Gemini");
+export const geminiModel = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
+// Never log credentials: hide the configured key and anything shaped like one.
+export function maskSecrets(text: string, max = 1000) {
+  const key = process.env.GEMINI_API_KEY;
+  let masked = key ? text.split(key).join("[CLAVE OCULTA]") : text;
+  masked = masked.replace(/AIza[0-9A-Za-z_-]{20,}/g, "[CLAVE OCULTA]");
+  return masked.length > max ? `${masked.slice(0, max)}…` : masked;
+}
+// Technician-facing explanation for an HTTP status returned by Gemini.
+export function geminiStatusMessage(status: number) {
+  if (status === 429)
+    return "Gemini rechazó la solicitud por límite de uso de la cuenta (HTTP 429). Repita el análisis en unos minutos; si persiste, el administrador debe revisar la cuota del proyecto en Google AI Studio.";
+  if (status === 401 || status === 403)
+    return `Gemini rechazó la clave de API (HTTP ${status}). El administrador debe verificar que GEMINI_API_KEY sea válida y tenga acceso al modelo configurado.`;
+  if (status === 404)
+    return `El modelo de Gemini configurado («${geminiModel()}») no existe o no está disponible (HTTP 404). El administrador debe revisar GEMINI_MODEL.`;
+  if (status >= 500)
+    return `Gemini presenta una falla temporal del servicio (HTTP ${status}). Repita el análisis en unos minutos.`;
+  return `Gemini respondió con un error inesperado (HTTP ${status}). Repita el análisis; si persiste, el administrador debe revisar los registros del servidor.`;
+}
+export const GEMINI_UNCONFIGURED =
+  "Gemini no está configurado en el servidor (falta GEMINI_API_KEY). El administrador debe definir la clave en el archivo .env y reiniciar el servicio.";
 export async function askGemini(
   input: AnalysisInput,
   fetcher: typeof fetch = fetch,
 ): Promise<Result> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key)
-    throw new ServiceUnavailableException(
-      "Gemini no está configurado. Utilice el modo demostración explícito o configure la clave en el servidor.",
-    );
-  const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  if (!key) throw new ServiceUnavailableException(GEMINI_UNCONFIGURED);
+  const model = geminiModel();
   try {
     const response = await fetcher(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -191,10 +231,15 @@ export async function askGemini(
         signal: AbortSignal.timeout(20000),
       },
     );
-    if (!response.ok)
-      throw new ServiceUnavailableException(
-        "Gemini no está disponible. Revise cuota y configuración del servidor. No se generó un resultado.",
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      logger.error(
+        `Gemini HTTP ${response.status} (modelo ${model}): ${maskSecrets(detail)}`,
       );
+      throw new ServiceUnavailableException(
+        geminiStatusMessage(response.status),
+      );
+    }
     const body: any = await response.json();
     const raw = body.candidates?.[0]?.content?.parts
       ?.map((p: any) => p.text || "")
@@ -207,12 +252,17 @@ export async function askGemini(
     if (
       error instanceof Error &&
       ["AbortError", "TimeoutError"].includes(error.name)
-    )
+    ) {
+      logger.error(`Gemini timeout: sin respuesta en 20 s (modelo ${model}).`);
       throw new GatewayTimeoutException(
-        "Gemini tardó demasiado. Intente nuevamente.",
+        "Gemini no respondió en 20 segundos. Repita el análisis más tarde; si ocurre con frecuencia, el administrador debe revisar la conectividad del servidor.",
       );
+    }
+    logger.error(
+      `Gemini devolvió una salida inválida (modelo ${model}): ${maskSecrets(error instanceof Error ? error.message : String(error), 300)}`,
+    );
     throw new BadGatewayException(
-      "Gemini devolvió una respuesta que no se pudo validar. No se guardó una recomendación.",
+      "Gemini devolvió una respuesta que no cumple el formato esperado. Repita el análisis para intentar obtener la evaluación de IA.",
     );
   }
 }

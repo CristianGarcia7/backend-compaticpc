@@ -20,6 +20,22 @@ export const equipmentInput = z
     serial: z.string().trim().max(100).default(""),
   })
   .strict();
+// Partial edit: only the provided fields change; at least one is required.
+export const equipmentUpdate = z
+  .object({
+    brand: text(60).optional(),
+    model: text(120).optional(),
+    board: text(240).optional(),
+    serial: z.string().trim().max(100).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0);
+export const feedbackInput = z
+  .object({
+    feedback: z.enum(["useful", "not-useful"]),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
 export const categories = z.enum([
   "RAM",
   "Almacenamiento",

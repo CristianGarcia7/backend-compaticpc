@@ -52,6 +52,9 @@ export class AuthService {
       throw new UnauthorizedException("Correo o contraseña incorrectos.");
     return setSession(res, user);
   }
+  // TODO: password reset by email (POST auth/forgot-password + auth/reset-password
+  // with a single-use, hashed, expiring token). Requires mail infrastructure,
+  // which is out of scope for this delivery.
   async logout(req: Request, res: Response) {
     const token = req.cookies?.compatipc_session;
     if (typeof token === "string")

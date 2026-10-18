@@ -142,6 +142,21 @@ test("passing rules keep the Gemini verdict", () => {
   ];
   assert.equal(mergeRules(geminiOutput, rules, []).verdict, "compatible");
 });
+test("B-8 a rule warning caps a compatible Gemini verdict at conditional", () => {
+  const warn = [{ id: "x", label: "Regla", status: "warn", detail: "Margen" }];
+  const merged = mergeRules(geminiOutput, warn, []);
+  assert.equal(merged.verdict, "conditional");
+  assert.match(merged.summary, /Margen/);
+});
+test("B-8 catalog warnings cap a compatible Gemini verdict at conditional", () => {
+  const pass = [
+    { id: "x", label: "Regla", status: "pass", detail: "Correcta" },
+  ];
+  assert.equal(
+    mergeRules(geminiOutput, pass, ["La ficha indica DIMM"]).verdict,
+    "conditional",
+  );
+});
 test("Gemini payload carries deterministic rule results as facts", () => {
   const payload = modelPayload({ ...input, rules: evaluateRules(input) });
   const text = payload.contents[0].parts[0].text;
@@ -167,38 +182,109 @@ test("AI schema rejects unsupported verdict, extra fields and excessive arrays",
     false,
   );
 });
-test("missing key is explicit 503, never demo fallback", async () => {
+// askGemini still rejects; AnalysesService turns the rejection into a rules fallback.
+function captureLogs() {
+  const { Logger } = require("@nestjs/common");
+  const lines = [];
+  const original = {
+    error: Logger.prototype.error,
+    warn: Logger.prototype.warn,
+  };
+  Logger.prototype.error = (msg) => lines.push(String(msg));
+  Logger.prototype.warn = (msg) => lines.push(String(msg));
+  return {
+    lines,
+    restore: () => Object.assign(Logger.prototype, original),
+  };
+}
+test("missing key rejects with an actionable message for the technician", async () => {
   delete process.env.GEMINI_API_KEY;
-  await assert.rejects(askGemini(input), (e) => e.getStatus() === 503);
-});
-test("provider error remains 503, never successful fallback", async () => {
-  process.env.GEMINI_API_KEY = "test-key";
   await assert.rejects(
-    askGemini(input, async () => new Response("{}", { status: 429 })),
-    (e) => e.getStatus() === 503,
+    askGemini(input),
+    (e) => e.getStatus() === 503 && /GEMINI_API_KEY/.test(e.message),
   );
 });
-test("malformed provider output is rejected", async () => {
+test("provider error is logged with status and masked body, never the key", async () => {
+  process.env.GEMINI_API_KEY = "AIzaSyTESTKEY1234567890abcdefghij";
+  const logs = captureLogs();
+  try {
+    await assert.rejects(
+      askGemini(
+        input,
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 429,
+                message: `Quota exceeded for key ${process.env.GEMINI_API_KEY} ${"x".repeat(3000)}`,
+              },
+            }),
+            { status: 429 },
+          ),
+      ),
+      (e) =>
+        e.getStatus() === 503 &&
+        /429/.test(e.message) &&
+        !/revise cuota y configuración del servidor/i.test(e.message),
+    );
+  } finally {
+    logs.restore();
+  }
+  const line = logs.lines.join("\n");
+  assert.match(line, /429/);
+  assert.match(line, /Quota exceeded/);
+  assert.equal(line.includes("AIzaSyTESTKEY1234567890abcdefghij"), false);
+  assert.ok(line.length < 1300);
+});
+test("rejected key and missing model produce distinct technician messages", async () => {
   process.env.GEMINI_API_KEY = "test-key";
-  await assert.rejects(
-    askGemini(input, async () =>
-      Response.json({
-        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+  const logs = captureLogs();
+  try {
+    await assert.rejects(
+      askGemini(input, async () => new Response("denied", { status: 403 })),
+      (e) => /clave/i.test(e.message),
+    );
+    await assert.rejects(
+      askGemini(input, async () => new Response("nope", { status: 404 })),
+      (e) => /GEMINI_MODEL/.test(e.message),
+    );
+  } finally {
+    logs.restore();
+  }
+});
+test("malformed provider output is rejected and logged", async () => {
+  process.env.GEMINI_API_KEY = "test-key";
+  const logs = captureLogs();
+  try {
+    await assert.rejects(
+      askGemini(input, async () =>
+        Response.json({
+          candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+        }),
+      ),
+      (e) => e.getStatus() === 502,
+    );
+  } finally {
+    logs.restore();
+  }
+  assert.ok(logs.lines.some((l) => /inválida|invalid/i.test(l)));
+});
+test("timeout is a 504 and is logged", async () => {
+  process.env.GEMINI_API_KEY = "test-key";
+  const logs = captureLogs();
+  try {
+    await assert.rejects(
+      askGemini(input, async () => {
+        const e = new Error("timeout");
+        e.name = "TimeoutError";
+        throw e;
       }),
-    ),
-    (e) => e.getStatus() === 502,
-  );
-});
-test("timeout is a 504", async () => {
-  process.env.GEMINI_API_KEY = "test-key";
-  await assert.rejects(
-    askGemini(input, async () => {
-      const e = new Error("timeout");
-      e.name = "TimeoutError";
-      throw e;
-    }),
-    (e) => e.getStatus() === 504,
-  );
+      (e) => e.getStatus() === 504 && /20 segundos/.test(e.message),
+    );
+  } finally {
+    logs.restore();
+  }
+  assert.ok(logs.lines.some((l) => /timeout|tiempo/i.test(l)));
 });
 test("valid structured Gemini response is accepted with server-side key header", async () => {
   process.env.GEMINI_API_KEY = "test-key";
