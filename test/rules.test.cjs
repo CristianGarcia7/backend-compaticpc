@@ -807,3 +807,59 @@ test("R1 a lower text recommendation never undercuts NVIDIA's figure", () => {
   assert.match(psu.detail, /850 W/);
   assert.equal(verdict, "incompatible");
 });
+// Review round 1: storage parsing.
+test("R1 a SATA token after a comma stays with its M.2 slot", () => {
+  const { rules, verdict } = storage(
+    {
+      brand: "X",
+      model: "Y",
+      board: "escritorio ATX, 1x M.2 2280 Key M supports PCIe 4.0 x4, SATA, 6 puertos SATA",
+    },
+    {
+      reference: "SSD M.2 SATA genérico",
+      specifications: "SSD M.2 2280 SATA III, clave B+M, 512GB",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(verdict, "compatible");
+});
+test("R1 'hasta 2280' admits every shorter M.2 length", () => {
+  const { rules } = storage(
+    { brand: "X", model: "Y", board: "escritorio ATX, M.2 Key M hasta 2280 PCIe 4.0" },
+    {
+      reference: "SSD 2242",
+      specifications: "SSD NVMe M.2 2242 PCIe 4.0 x4",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-form-factor").status, "pass");
+  const longer = storage(
+    { brand: "X", model: "Y", board: "Portátil, M.2 Key M up to 2242 PCIe NVMe" },
+  );
+  assert.equal(rule(longer.rules, "storage-form-factor").status, "fail");
+});
+test("R1 a shorter drive in a desktop slot listing only 2280 warns", () => {
+  const { rules, verdict } = storage(
+    { brand: "X", model: "Y", board: "escritorio ATX, M.2 Key M 2280 PCIe 4.0 x4" },
+    {
+      reference: "SSD 2230",
+      specifications: "SSD NVMe M.2 2230 PCIe 4.0 x4",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-form-factor").status, "warn");
+  assert.equal(verdict, "conditional");
+  // S2 stays incompatible: a longer drive than the laptop's 2242 slot.
+  assert.equal(storage(thinkpadE14).verdict, "incompatible");
+});
+test("R1 2.5-inch, 2.5 inch and 2,5 pulgadas are read as 2.5\"", () => {
+  for (const spec of ["SSD SATA 2.5-inch 1TB", "SSD SATA 2.5 inch 1TB", "SSD SATA 2,5 pulgadas 1TB"]) {
+    const { rules, verdict } = storage(
+      { brand: "X", model: "Y", board: "escritorio ATX, 4 puertos SATA, bahía 2.5-inch" },
+      { reference: "SSD genérico", specifications: spec, catalog: null },
+    );
+    assert.equal(rule(rules, "storage-form-factor").status, "pass", spec);
+    assert.equal(verdict, "compatible", spec);
+  }
+});

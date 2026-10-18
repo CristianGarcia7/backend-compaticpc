@@ -674,7 +674,16 @@ type M2Key = "M" | "B" | "B+M";
 // "M.2" with the dot; a bare "M2" only before a length (Apple M2 is a chip).
 const M2_RE = /\bM\.2(?!\d)|\bM2(?=[\s-]?22(?:30|42|60|80|110)\b)/i;
 const M2_LENGTH_RE = /\b22(?:30|42|60|80|110)\b/g;
-const BAY_RE = /\b([23])[.,]5\s?(?:"|”|″|''|pulgadas|inch|in\b)/gi;
+const BAY_RE =
+  /\b([23])[.,]5\s?-?\s?(?:"|”|″|''|pulgadas|inch(?:es)?\b|in\b)/gi;
+const M2_LENGTHS = [2230, 2242, 2260, 2280, 22110];
+// "hasta 2280", "up to 2280", "máx. 2280": every standard length up to N.
+const M2_MAX_RE =
+  /(?:hasta|up\s+to|m[aá]x(?:imo|imum)?\.?)\s*(?:M\.2\s*)?(22(?:30|42|60|80|110))\b/i;
+// A bare interface list ("SATA", "PCIe 4.0 x4 / SATA") continues the
+// previous M.2 segment instead of describing another port.
+const INTERFACE_TAIL_RE =
+  /^(?:\s|and|y|or|o|\/|&|SATA(?:\s?I{1,3}|\s?[23])?|PCI-?e|NVMe|Gen\s?\d|\d(?:\.\d)?|x\d|mode|modo)*$/i;
 function interfacesOf(text: string) {
   const found = new Set<DriveInterface>();
   if (/NVMe|PCI-?e|PCI Express/i.test(text)) found.add("NVMe");
@@ -721,7 +730,17 @@ interface StorageSlots {
 // Only what the equipment states: M.2 segments (Wi-Fi Key E slots excluded),
 // drive bays and SATA ports elsewhere.
 function storageSlots(board: string): StorageSlots {
-  const segments = board.split(/[;\n]|,\s/);
+  const segments: string[] = [];
+  for (const part of board.split(/[;\n]|,\s/)) {
+    const last = segments.length - 1;
+    if (
+      last >= 0 &&
+      M2_RE.test(segments[last]) &&
+      INTERFACE_TAIL_RE.test(part)
+    )
+      segments[last] += `, ${part}`;
+    else segments.push(part);
+  }
   const m2 = segments.filter(
     (s) =>
       M2_RE.test(s) &&
@@ -732,12 +751,19 @@ function storageSlots(board: string): StorageSlots {
   const keys = new Set(m2.map(keyOf).filter((k) => k !== null));
   return {
     m2: m2.length > 0,
-    lengths: [...new Set(m2Text.match(M2_LENGTH_RE) ?? [])].map(Number),
+    lengths: m2Lengths(m2Text),
     interfaces: interfacesOf(m2Text),
     key: keys.size === 1 ? [...keys][0] : null,
     bays: new Set([...rest.matchAll(BAY_RE)].map((m) => `${m[1]}.5`)),
     sata: /\bSATA/i.test(rest),
   };
+}
+function m2Lengths(text: string) {
+  const listed = new Set((text.match(M2_LENGTH_RE) ?? []).map(Number));
+  const max = text.match(M2_MAX_RE);
+  if (max)
+    for (const l of M2_LENGTHS) if (l <= Number(max[1])) listed.add(l);
+  return [...listed].sort((a, b) => a - b);
 }
 const formLabel = (f: DriveForm) =>
   f.kind === "M.2"
@@ -785,22 +811,31 @@ function storageRules(input: RuleInput): RuleResult[] {
         `El equipo tiene ranura M.2, pero no indica qué longitudes admite. Confirme en el manual que acepta M.2 ${length}.`,
         form.source,
       );
+    else if (slots.lengths.includes(length))
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "pass",
+        `La unidad M.2 ${length} cabe en la ranura ${lengths} del equipo.`,
+        form.source,
+      );
+    // A shorter drive in a desktop board usually fits by moving the standoff.
+    else if (type === "desktop" && length < Math.max(...slots.lengths))
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "warn",
+        `La unidad es M.2 ${length} y la ranura del equipo indica ${lengths}. Una unidad más corta suele fijarse moviendo el separador; confirme en el manual que la placa tiene esa posición.`,
+        form.source,
+      );
     else
-      shape = slots.lengths.includes(length)
-        ? rule(
-            "storage-form-factor",
-            shapeLabel,
-            "pass",
-            `La unidad M.2 ${length} cabe en la ranura ${lengths} del equipo.`,
-            form.source,
-          )
-        : rule(
-            "storage-form-factor",
-            shapeLabel,
-            "fail",
-            `La unidad es M.2 ${length} y la ranura del equipo admite ${lengths}. No encaja físicamente.`,
-            form.source,
-          );
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "fail",
+        `La unidad es M.2 ${length} y la ranura del equipo admite ${lengths}. No encaja físicamente.`,
+        form.source,
+      );
   } else {
     const size = form.value.kind;
     shape = slots.bays.has(size)
