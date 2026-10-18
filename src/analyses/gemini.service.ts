@@ -100,7 +100,26 @@ export function mergeRules(
   warnings: string[],
 ): AnalysisResult {
   const failed = rules.filter((r) => r.status === "fail");
-  if (!failed.length) return { ...gemini, rules, warnings };
+  if (!failed.length) {
+    // Rule warnings or catalog contradictions cap "compatible" at "conditional".
+    const cautions = [
+      ...rules.filter((r) => r.status === "warn").map((r) => r.detail),
+      ...warnings,
+    ];
+    if (gemini.verdict !== "compatible" || !cautions.length)
+      return { ...gemini, rules, warnings };
+    return {
+      ...gemini,
+      verdict: "conditional",
+      summary:
+        `Requiere verificación por advertencias técnicas: ${cautions.join(" ")} ${gemini.summary}`.slice(
+          0,
+          1800,
+        ),
+      rules,
+      warnings,
+    };
+  }
   return {
     ...gemini,
     verdict: "incompatible",

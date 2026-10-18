@@ -142,6 +142,21 @@ test("passing rules keep the Gemini verdict", () => {
   ];
   assert.equal(mergeRules(geminiOutput, rules, []).verdict, "compatible");
 });
+test("B-8 a rule warning caps a compatible Gemini verdict at conditional", () => {
+  const warn = [{ id: "x", label: "Regla", status: "warn", detail: "Margen" }];
+  const merged = mergeRules(geminiOutput, warn, []);
+  assert.equal(merged.verdict, "conditional");
+  assert.match(merged.summary, /Margen/);
+});
+test("B-8 catalog warnings cap a compatible Gemini verdict at conditional", () => {
+  const pass = [
+    { id: "x", label: "Regla", status: "pass", detail: "Correcta" },
+  ];
+  assert.equal(
+    mergeRules(geminiOutput, pass, ["La ficha indica DIMM"]).verdict,
+    "conditional",
+  );
+});
 test("Gemini payload carries deterministic rule results as facts", () => {
   const payload = modelPayload({ ...input, rules: evaluateRules(input) });
   const text = payload.contents[0].parts[0].text;
