@@ -330,20 +330,112 @@ function cpuRules(input: RuleInput): RuleResult[] {
         ),
   ];
 }
+// "Required System Power (W)" from the official NVIDIA spec pages.
+const NVIDIA_4060 =
+  "https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4060-4060ti/";
+const GPU_SYSTEM_POWER = [
+  {
+    re: /RTX\s?4090/i,
+    name: "NVIDIA GeForce RTX 4090",
+    watts: 850,
+    url: "https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/",
+  },
+  {
+    re: /RTX\s?4060\s?Ti/i,
+    name: "NVIDIA GeForce RTX 4060 Ti",
+    watts: 550,
+    url: NVIDIA_4060,
+  },
+  {
+    re: /RTX\s?4060(?!\s?Ti)(?![0-9A-Z])/i,
+    name: "NVIDIA GeForce RTX 4060",
+    watts: 550,
+    url: NVIDIA_4060,
+  },
+];
+// "fuente recomendada 850 W", "recommended PSU 850W", "850 W system power",
+// "Required System Power (W) 850", "550W Minimum system power".
+const RECOMMENDED_PSU = [
+  /(?:fuente|PSU|power supply)(?:\s+de\s+poder)?\s+(?:recomendada|m[ií]nima|requerida|recommended|minimum|required)\s*:?\s*(?:de\s+)?(\d{3,4})\s?W\b/i,
+  /(?:recommended|minimum|required)\s+(?:system\s+power|PSU|power\s+supply)\s*(?:\(W\))?\s*:?\s*(\d{3,4})(?:\s?W)?\b/i,
+  /\b(\d{3,4})\s?W\s+(?:(?:minimum|recommended|required)\s+(?:system\s+power|PSU|power\s+supply)|system\s+power)\b/i,
+];
+function withoutRecommendations(text: string) {
+  return RECOMMENDED_PSU.reduce(
+    (acc, re) => acc.replace(new RegExp(re.source, "gi"), " "),
+    text,
+  );
+}
+interface PsuRecommendation {
+  watts: number;
+  label: string;
+  source: string;
+}
+// A wattage stated in the data wins; otherwise a known GPU's official figure.
+function recommendedPsu(input: RuleInput): PsuRecommendation | null {
+  for (const [text, source, who] of [
+    [input.equipment.board, EQUIPMENT_SOURCE, "los datos del equipo"],
+    [input.specifications, USER_SOURCE, "los datos ingresados"],
+  ])
+    for (const re of RECOMMENDED_PSU) {
+      const m = text.match(re);
+      if (m)
+        return {
+          watts: Number(m[1]),
+          label: `la fuente recomendada que indican ${who}`,
+          source,
+        };
+    }
+  const text = `${input.equipment.board}; ${input.specifications}`;
+  const known = GPU_SYSTEM_POWER.filter((g) => g.re.test(text));
+  if (known.length !== 1) return null;
+  const gpu = known[0];
+  return {
+    watts: gpu.watts,
+    label: `la potencia de sistema que exige NVIDIA para la ${gpu.name}`,
+    source: `Especificaciones oficiales ${gpu.name} (${gpu.url})`,
+  };
+}
 function psuRules(input: RuleInput): RuleResult[] {
-  const load = systemLoad(`${input.equipment.board} ${input.specifications}`);
+  const rec = recommendedPsu(input);
+  const load = systemLoad(
+    withoutRecommendations(
+      `${input.equipment.board}; ${input.specifications}`,
+    ),
+  );
   // Exclude CPU/GPU TDP fragments so the PSU rating is not confused with them.
   const strip = (text: string) =>
     [load.cpu?.match, load.gpu?.match].reduce<string>(
       (acc, part) => (part ? acc.replace(part, " ") : acc),
-      text,
+      withoutRecommendations(text),
     );
   const psu = componentFact(input, (text) => firstWatts(strip(text), 150));
-  if (!psu || (!load.cpu && !load.gpu))
+  const label = "Capacidad de la fuente";
+  const belowRecommendation = (value: number, extra = "") =>
+    rule(
+      "psu-capacity",
+      label,
+      "fail",
+      `La fuente de ${value} W está por debajo de los ${rec!.watts} W de ${rec!.label}.${extra}`,
+      `${rec!.source} · ${psu!.source}`,
+    );
+  if (!psu || (!load.cpu && !load.gpu)) {
+    if (psu && rec && psu.value < rec.watts)
+      return [belowRecommendation(psu.value)];
+    if (psu && rec)
+      return [
+        rule(
+          "psu-capacity",
+          label,
+          "warn",
+          `La fuente de ${psu.value} W cumple los ${rec.watts} W de ${rec.label}, pero falta el TDP del procesador y de la tarjeta gráfica para estimar el consumo.`,
+          `${rec.source} · ${psu.source}`,
+        ),
+      ];
     return [
       rule(
         "psu-capacity",
-        "Capacidad de la fuente",
+        label,
         "unknown",
         psu
           ? `La fuente entrega ${psu.value} W, pero falta el TDP del procesador y de la tarjeta gráfica para estimar el consumo.`
@@ -351,39 +443,47 @@ function psuRules(input: RuleInput): RuleResult[] {
         psu?.source,
       ),
     ];
+  }
   const cpu = load.cpu?.watts ?? 0;
   const gpu = load.gpu?.watts ?? 0;
   const raw = cpu + gpu + 100;
   const required = Math.ceil(raw * 1.3);
   const estimate = `CPU ${load.cpu ? `${cpu} W` : "sin dato"} + GPU ${load.gpu ? `${gpu} W` : "sin dato"} + 100 W base = ${raw} W; recomendado con 30 % de margen: ${required} W`;
+  const meets = rec ? ` Cumple los ${rec.watts} W de ${rec.label}.` : "";
+  const source = rec ? `${rec.source} · ${psu.source}` : psu.source;
   // Below the raw sum is a clear failure; inside the margin only a warning.
   if (psu.value < raw)
     return [
       rule(
         "psu-capacity",
-        "Capacidad de la fuente",
+        label,
         "fail",
         `La fuente de ${psu.value} W no alcanza el consumo estimado (${estimate}).`,
         psu.source,
       ),
     ];
+  // The GPU maker's figure already includes the rest of a typical system.
+  if (rec && psu.value < rec.watts)
+    return [
+      belowRecommendation(psu.value, ` Consumo estimado: ${estimate}.`),
+    ];
   if (psu.value < required)
     return [
       rule(
         "psu-capacity",
-        "Capacidad de la fuente",
+        label,
         "warn",
-        `La fuente de ${psu.value} W cubre el consumo estimado, pero sin el margen recomendado (${estimate}). Bajo picos de carga puede apagarse.`,
-        psu.source,
+        `La fuente de ${psu.value} W cubre el consumo estimado, pero sin el margen recomendado (${estimate}). Bajo picos de carga puede apagarse.${meets}`,
+        source,
       ),
     ];
   return [
     rule(
       "psu-capacity",
-      "Capacidad de la fuente",
+      label,
       load.cpu && load.gpu ? "pass" : "warn",
-      `La fuente de ${psu.value} W cubre el consumo estimado (${estimate}).${load.cpu && load.gpu ? "" : " Falta un dato de TDP; confirme el consumo total."}`,
-      psu.source,
+      `La fuente de ${psu.value} W cubre el consumo estimado (${estimate}).${meets}${load.cpu && load.gpu ? "" : " Falta un dato de TDP; confirme el consumo total."}`,
+      source,
     ),
   ];
 }

@@ -504,3 +504,116 @@ test("nit: 'sin PD' is not read as USB-C", () => {
   });
   assert.equal(rule(rules, "charger-connector").status, "pass");
 });
+// H2: the GPU manufacturer's required system power.
+const rm750x = {
+  name: "Corsair RM750x",
+  category: "Fuente de poder",
+  specifications: "750W, 80 Plus Gold, formato ATX, totalmente modular",
+  source: "Ficha técnica oficial Corsair",
+  datasheetUrl: "https://www.corsair.com/rm750x",
+};
+test("H2 RTX 4090 with an RM750x fails below NVIDIA's 850 W system power", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "ASUS",
+      model: "PRIME Z790-P",
+      board:
+        "ASUS PRIME Z790-P, escritorio ATX, socket LGA1700; CPU Core i5-12400F 117 W, GPU RTX 4090 450 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "",
+    catalog: rm750x,
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.equal(psu.status, "fail");
+  assert.match(psu.detail, /850 W/);
+  assert.match(psu.detail, /RTX 4090/);
+  assert.match(psu.source, /nvidia\.com\/en-us\/geforce\/graphics-cards\/40-series\/rtx-4090/);
+  assert.equal(verdict, "incompatible");
+});
+test("H2 RTX 4060 with an RM750x meets NVIDIA's 550 W and stays compatible", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "MSI",
+      model: "MAG B550 TOMAHAWK",
+      board: "B550 ATX; CPU Ryzen 5 5600X 65 W, GPU RTX 4060 115 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "",
+    catalog: rm750x,
+  });
+  assert.equal(rule(rules, "psu-capacity").status, "pass");
+  assert.match(rule(rules, "psu-capacity").detail, /550 W/);
+  assert.equal(verdict, "compatible");
+});
+test("H2 a recommended PSU stated in the text wins and is cited", () => {
+  for (const phrase of [
+    "fuente recomendada 850 W",
+    "recommended PSU 850W",
+    "850 W system power",
+  ]) {
+    const { rules } = run({
+      equipment: {
+        brand: "Personalizado",
+        model: "PC",
+        board: `B550 ATX; CPU Ryzen 5 5600X 65 W, GPU genérica 300 W, ${phrase}`,
+      },
+      category: "Fuente de poder",
+      reference: "Fuente 750W",
+      specifications: "750W 80 Plus Gold",
+    });
+    const psu = rule(rules, "psu-capacity");
+    assert.equal(psu.status, "fail", phrase);
+    assert.match(psu.detail, /850 W/, phrase);
+    assert.match(psu.source, /equipo registrado/, phrase);
+  }
+});
+test("H2 the recommendation phrase is never read as the PSU or GPU wattage", () => {
+  const { rules } = run({
+    equipment: { brand: "Personalizado", model: "PC", board: "B550 ATX" },
+    category: "Fuente de poder",
+    reference: "Fuente genérica",
+    specifications:
+      "1000W 80 Plus Gold; CPU Ryzen 5 5600X 65 W, GPU RTX 4090 (fuente recomendada 850 W)",
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.match(psu.detail, /fuente de 1000 W/);
+  assert.doesNotMatch(psu.detail, /GPU 850 W/);
+});
+test("H2 a known GPU without TDP still fails a PSU below its requirement", () => {
+  const { rules, verdict } = run({
+    equipment: { brand: "Personalizado", model: "PC", board: "Z790 ATX, GPU RTX 4090" },
+    category: "Fuente de poder",
+    reference: "EVGA 600 BR",
+    specifications: "600W",
+  });
+  assert.equal(rule(rules, "psu-capacity").status, "fail");
+  assert.equal(verdict, "incompatible");
+});
+test("H2 raw-sum failure and margin warning keep working with a recommendation", () => {
+  const below = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX, CPU Core i9-13900K 253W, GPU RTX 4090 450W",
+    },
+    category: "Fuente de poder",
+    reference: "Fuente",
+    specifications: "700W",
+  });
+  assert.equal(rule(below.rules, "psu-capacity").status, "fail");
+  assert.match(rule(below.rules, "psu-capacity").detail, /no alcanza el consumo estimado/);
+  const margin = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX, CPU Core i9-13900K 253W, GPU RTX 4090 450W",
+    },
+    category: "Fuente de poder",
+    reference: "Fuente",
+    specifications: "900W",
+  });
+  assert.equal(rule(margin.rules, "psu-capacity").status, "warn");
+});
