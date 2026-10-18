@@ -336,19 +336,19 @@ const NVIDIA_4060 =
 const GPU_SYSTEM_POWER = [
   {
     re: /RTX\s?4090/i,
-    name: "NVIDIA GeForce RTX 4090",
+    name: "GeForce RTX 4090",
     watts: 850,
     url: "https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/",
   },
   {
     re: /RTX\s?4060\s?Ti/i,
-    name: "NVIDIA GeForce RTX 4060 Ti",
+    name: "GeForce RTX 4060 Ti",
     watts: 550,
     url: NVIDIA_4060,
   },
   {
     re: /RTX\s?4060(?!\s?Ti)(?![0-9A-Z])/i,
-    name: "NVIDIA GeForce RTX 4060",
+    name: "GeForce RTX 4060",
     watts: 550,
     url: NVIDIA_4060,
   },
@@ -393,7 +393,7 @@ function recommendedPsu(input: RuleInput): PsuRecommendation | null {
     candidates.push({
       watts: known[0].watts,
       label: `la potencia de sistema que exige NVIDIA para la ${known[0].name}`,
-      source: `Especificaciones oficiales ${known[0].name} (${known[0].url})`,
+      source: `Especificaciones oficiales NVIDIA ${known[0].name} (${known[0].url})`,
     });
   return candidates.reduce<PsuRecommendation | null>(
     (best, c) => (!best || c.watts > best.watts ? c : best),
@@ -786,7 +786,7 @@ function storageRules(input: RuleInput): RuleResult[] {
     );
   else if (form.value.kind === "M.2") {
     const length = form.value.length;
-    const lengths = slots.lengths.map((l) => `M.2 ${l}`).join("/");
+    const lengths = `M.2 ${slots.lengths.join("/")}`;
     if (!slots.m2)
       shape = rule(
         "storage-form-factor",
