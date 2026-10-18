@@ -73,7 +73,7 @@ test("Gemini health network errors are unavailable, not thrown", async () => {
   assert.equal((await service.check()).status, "unavailable");
 });
 function system(dbOk, gemini = { status: "ok", checkedAt: "now" }) {
-  const service = new SystemService({ check: async () => gemini });
+  const service = new SystemService({ snapshot: () => gemini });
   service.dbCheck = async () => {
     if (!dbOk) throw new Error("down");
   };
@@ -96,4 +96,59 @@ test("config keeps geminiConfigured and adds the cached Gemini check", async () 
   const config = await system(true, gemini).config();
   assert.equal(config.geminiConfigured, true);
   assert.deepEqual(config.gemini, gemini);
+});
+
+test("a different key of the same length invalidates the health cache", async () => {
+  process.env.GEMINI_API_KEY = "aaaa-key";
+  Logger.prototype.error = () => {};
+  let status = 200;
+  const { service, calls } = health({ status: () => status });
+  assert.equal((await service.check()).status, "ok");
+  process.env.GEMINI_API_KEY = "bbbb-key";
+  status = 403;
+  assert.equal((await service.check()).status, "unavailable");
+  assert.equal(calls.length, 2);
+});
+test("snapshot never waits for a cold probe and refreshes in the background", async () => {
+  process.env.GEMINI_API_KEY = "test-key";
+  const service = new GeminiHealthService();
+  let release;
+  service.fetcher = () =>
+    new Promise((resolve) => {
+      release = () => resolve(new Response("{}", { status: 200 }));
+    });
+  assert.equal(service.snapshot().status, "checking");
+  assert.equal(service.snapshot().status, "checking");
+  release();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(service.snapshot().status, "ok");
+});
+test("health is served from the snapshot without awaiting Gemini", async () => {
+  const service = new SystemService({
+    snapshot: () => ({ status: "checking", checkedAt: "now" }),
+    check: () => new Promise(() => {}),
+  });
+  service.dbCheck = async () => {};
+  assert.deepEqual(await service.health(), {
+    status: "ok",
+    db: "ok",
+    gemini: "checking",
+  });
+});
+test("health responds 503 when the database check fails", async () => {
+  const { SystemController } = require("../dist/system/system.controller");
+  const res = {
+    code: 200,
+    status(code) {
+      this.code = code;
+      return this;
+    },
+  };
+  const controller = new SystemController(system(false));
+  const body = await controller.health(res);
+  assert.equal(res.code, 503);
+  assert.equal(body.db, "error");
+  const okRes = { ...res, code: 200 };
+  await new SystemController(system(true)).health(okRes);
+  assert.equal(okRes.code, 200);
 });

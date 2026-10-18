@@ -1,11 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import {
   geminiModel,
   geminiStatusMessage,
   maskSecrets,
 } from "../analyses/gemini.service";
 export interface GeminiHealth {
-  status: "ok" | "unavailable" | "unconfigured";
+  // "checking": no result cached yet; a background probe is in flight.
+  status: "ok" | "unavailable" | "unconfigured" | "checking";
   checkedAt: string;
   detail?: string;
 }
@@ -20,15 +22,37 @@ export class GeminiHealthService {
   // Overridable in tests so they never reach the network.
   fetcher: typeof fetch = (...args) => fetch(...args);
   now = () => Date.now();
+  private unconfigured(): GeminiHealth {
+    return {
+      status: "unconfigured",
+      checkedAt: new Date(this.now()).toISOString(),
+      detail: "Falta GEMINI_API_KEY en el servidor.",
+    };
+  }
+  // Non-reversible fingerprint: a key change invalidates the cache.
+  private cacheKey(key: string) {
+    const digest = createHash("sha256").update(key).digest("hex").slice(0, 8);
+    return `${geminiModel()}:${digest}`;
+  }
+  // Never waits: returns the last result (even if stale) and refreshes it in
+  // the background. Used by /health and /config.
+  snapshot(): GeminiHealth {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) return this.unconfigured();
+    const fresh =
+      this.cached?.key === this.cacheKey(key) &&
+      this.cached.expires > this.now();
+    if (!fresh) void this.check().catch(() => undefined);
+    if (this.cached?.key === this.cacheKey(key)) return this.cached.value;
+    return {
+      status: "checking",
+      checkedAt: new Date(this.now()).toISOString(),
+    };
+  }
   async check(): Promise<GeminiHealth> {
     const key = process.env.GEMINI_API_KEY;
-    if (!key)
-      return {
-        status: "unconfigured",
-        checkedAt: new Date(this.now()).toISOString(),
-        detail: "Falta GEMINI_API_KEY en el servidor.",
-      };
-    const cacheKey = `${geminiModel()}:${key.length}`;
+    if (!key) return this.unconfigured();
+    const cacheKey = this.cacheKey(key);
     if (
       this.cached &&
       this.cached.key === cacheKey &&

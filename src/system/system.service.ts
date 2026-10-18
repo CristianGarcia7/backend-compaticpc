@@ -18,7 +18,7 @@ export class SystemService {
         () => "ok" as const,
         () => "error" as const,
       ),
-      this.gemini.check(),
+      this.gemini.snapshot(),
     ]);
     return {
       status: dbStatus === "ok" ? "ok" : "error",
@@ -31,7 +31,7 @@ export class SystemService {
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
       demoEnabled: process.env.DEMO_ENABLED === "true",
       model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
-      gemini: await this.gemini.check(),
+      gemini: this.gemini.snapshot(),
     };
   }
   async dashboard(req: Request) {

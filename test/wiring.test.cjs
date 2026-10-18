@@ -17,7 +17,8 @@ test("Nest modules and controllers initialize without opening a listener", async
     const health = await system.health();
     assert.equal(health.status, "ok");
     assert.equal(health.db, "ok");
-    assert.ok(["ok", "unconfigured"].includes(health.gemini));
+    // Cold start: /health never waits for the Gemini probe.
+    assert.ok(["checking", "unconfigured"].includes(health.gemini));
   } finally {
     await app.close();
   }
