@@ -617,3 +617,130 @@ test("H2 raw-sum failure and margin warning keep working with a recommendation",
   });
   assert.equal(rule(margin.rules, "psu-capacity").status, "warn");
 });
+// H3: storage. Equipment texts come from the technical validation cases.
+const samsung970 = {
+  name: "Samsung 970 EVO Plus MZ-V7S1T0BW",
+  category: "Almacenamiento",
+  specifications:
+    "SSD NVMe M.2 2280, PCIe 3.0 x4, 1TB, lectura hasta 3500MB/s, escritura hasta 3300MB/s",
+  source: "Ficha técnica oficial Samsung",
+  datasheetUrl: null,
+};
+const primeZ790 = {
+  brand: "ASUS",
+  model: "PRIME Z790-P",
+  board:
+    "ASUS PRIME Z790-P, escritorio ATX, socket LGA1700, 4 ranuras DIMM DDR5, M.2 Key M 2242/2260/2280 PCIe 4.0 x4",
+};
+const thinkpadE14 = {
+  brand: "Lenovo",
+  model: "ThinkPad E14 Gen 4 (Intel)",
+  board:
+    "Portátil, 8 GB soldada + 1 ranura SO-DIMM DDR4-3200; adaptador 65 W USB-C PD 3.0; batería integrada Li-Polymer 57 Wh; 2 ranuras M.2 2242 PCIe NVMe",
+};
+const storage = (equipment, extra = {}) =>
+  run({
+    equipment,
+    category: "Almacenamiento",
+    reference: "Samsung 970 EVO Plus MZ-V7S1T0BW",
+    specifications: "",
+    catalog: samsung970,
+    ...extra,
+  });
+test("H3 an M.2 2280 NVMe SSD in an M.2 Key M 2242/2260/2280 PCIe slot is compatible", () => {
+  const { rules, verdict } = storage(primeZ790);
+  assert.equal(rule(rules, "storage-form-factor").status, "pass");
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(rule(rules, "storage-key").status, "pass");
+  assert.equal(verdict, "compatible");
+});
+test("H3 an M.2 2280 SSD in a laptop with only M.2 2242 slots is incompatible", () => {
+  const { rules, verdict } = storage(thinkpadE14);
+  const shape = rule(rules, "storage-form-factor");
+  assert.equal(shape.status, "fail");
+  assert.match(shape.detail, /2280/);
+  assert.match(shape.detail, /2242/);
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 a SATA M.2 B+M drive fails in a slot stated as PCIe/NVMe only", () => {
+  const { rules, verdict } = storage(primeZ790, {
+    reference: "SSD M.2 SATA genérico",
+    specifications: "SSD M.2 2280 SATA III, clave B+M, 512GB",
+    catalog: null,
+  });
+  assert.equal(rule(rules, "storage-interface").status, "fail");
+  assert.equal(rule(rules, "storage-key").status, "pass");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 an NVMe M-key drive fails in a slot stated as Key B SATA", () => {
+  const { rules, verdict } = storage({
+    brand: "Genérico",
+    model: "Mini PC",
+    board: "Mini PC, 1 ranura M.2 Key B 2280 SATA",
+  });
+  assert.equal(rule(rules, "storage-key").status, "fail");
+  assert.equal(rule(rules, "storage-interface").status, "fail");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 equipment that does not state its storage slot never fails", () => {
+  for (const board of [
+    "Portátil, 2 ranuras SO-DIMM DDR4",
+    "escritorio ATX, socket AM4, 4 ranuras DIMM DDR4",
+    "MacBook Air M2, portátil",
+  ]) {
+    const { rules, verdict } = storage({ brand: "X", model: "Y", board });
+    assert.equal(rules.some((r) => r.status === "fail"), false, board);
+    assert.equal(verdict, "conditional", board);
+  }
+});
+test("H3 an M.2 slot without stated lengths or interface warns or is unknown", () => {
+  const { rules, verdict } = storage({
+    brand: "X",
+    model: "Y",
+    board: "escritorio ATX, 1 ranura M.2",
+  });
+  assert.notEqual(rule(rules, "storage-form-factor").status, "fail");
+  assert.equal(rule(rules, "storage-interface").status, "unknown");
+  assert.equal(verdict, "conditional");
+});
+test("H3 a 2.5-inch SATA SSD needs a stated bay and SATA port to pass", () => {
+  const mx500 = {
+    reference: "Crucial MX500 CT1000MX500SSD1",
+    catalog: {
+      name: "Crucial MX500 CT1000MX500SSD1",
+      category: "Almacenamiento",
+      specifications:
+        "SSD SATA III (6 Gb/s) 2.5 pulgadas, 1TB, 7mm de espesor, lectura hasta 560MB/s, escritura hasta 510MB/s",
+      source: "Ficha técnica oficial Crucial",
+      datasheetUrl: null,
+    },
+  };
+  const stated = storage(
+    {
+      brand: "MSI",
+      model: "MAG B550 TOMAHAWK",
+      board: "escritorio ATX, socket AM4, 6 puertos SATA 6Gb/s, bahías de 2.5 pulgadas",
+    },
+    mx500,
+  );
+  assert.equal(rule(stated.rules, "storage-form-factor").status, "pass");
+  assert.equal(rule(stated.rules, "storage-interface").status, "pass");
+  assert.equal(stated.verdict, "compatible");
+  const silent = storage(
+    { brand: "MSI", model: "MAG B550 TOMAHAWK", board: "escritorio ATX, socket AM4" },
+    mx500,
+  );
+  assert.equal(silent.rules.some((r) => r.status === "fail"), false);
+  assert.equal(silent.verdict, "conditional");
+});
+test("H3 a drive without form factor or interface is unknown", () => {
+  const { rules, verdict } = storage(primeZ790, {
+    reference: "SSD 1TB",
+    specifications: "1TB",
+    catalog: null,
+  });
+  assert.equal(rule(rules, "storage-form-factor").status, "unknown");
+  assert.equal(rule(rules, "storage-interface").status, "unknown");
+  assert.equal(verdict, "conditional");
+});

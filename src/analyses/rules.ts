@@ -661,6 +661,234 @@ function batteryRules(input: RuleInput): RuleResult[] {
   }
   return rules;
 }
+// Storage: interface, M.2 key and form factor against the equipment's slot.
+export type DriveInterface = "SATA" | "NVMe";
+export type DriveForm =
+  | { kind: "M.2"; length: number | null }
+  | { kind: "2.5" | "3.5" };
+type M2Key = "M" | "B" | "B+M";
+// "M.2" with the dot; a bare "M2" only before a length (Apple M2 is a chip).
+const M2_RE = /\bM\.2(?!\d)|\bM2(?=[\s-]?22(?:30|42|60|80|110)\b)/i;
+const M2_LENGTH_RE = /\b22(?:30|42|60|80|110)\b/g;
+const BAY_RE = /\b([23])[.,]5\s?(?:"|”|″|''|pulgadas|inch|in\b)/gi;
+function interfacesOf(text: string) {
+  const found = new Set<DriveInterface>();
+  if (/NVMe|PCI-?e|PCI Express/i.test(text)) found.add("NVMe");
+  if (/\bSATA/i.test(text)) found.add("SATA");
+  return found;
+}
+export function driveInterface(text: string): DriveInterface | null {
+  const found = interfacesOf(text);
+  return found.size === 1 ? [...found][0] : null;
+}
+export function driveForm(text: string): DriveForm | null {
+  const bays = new Set([...text.matchAll(BAY_RE)].map((m) => m[1]));
+  const m2 = M2_RE.test(text);
+  if (Number(m2) + bays.size !== 1) return null;
+  if (!m2) return { kind: bays.has("2") ? "2.5" : "3.5" };
+  const lengths = new Set(text.match(M2_LENGTH_RE) ?? []);
+  return {
+    kind: "M.2",
+    length: lengths.size === 1 ? Number([...lengths][0]) : null,
+  };
+}
+function keyOf(text: string): M2Key | null {
+  if (/\bB\s?(?:\+|&|\/)\s?M\b|\bM\s?(?:\+|&|\/)\s?B\b/.test(text))
+    return "B+M";
+  const m = text.match(
+    /\b(?:key|clave|llave)\s?-?\s?([BM])\b|\b([BM])[\s-]?key\b/i,
+  );
+  return m ? ((m[1] ?? m[2]).toUpperCase() as M2Key) : null;
+}
+// An NVMe M.2 drive (PCIe x4) always uses the M key.
+function driveKey(text: string): M2Key | null {
+  const key = keyOf(text);
+  if (key) return key;
+  return M2_RE.test(text) && driveInterface(text) === "NVMe" ? "M" : null;
+}
+interface StorageSlots {
+  m2: boolean;
+  lengths: number[];
+  interfaces: Set<DriveInterface>;
+  key: M2Key | null;
+  bays: Set<string>;
+  sata: boolean;
+}
+// Only what the equipment states: M.2 segments (Wi-Fi Key E slots excluded),
+// drive bays and SATA ports elsewhere.
+function storageSlots(board: string): StorageSlots {
+  const segments = board.split(/[;\n]|,\s/);
+  const m2 = segments.filter(
+    (s) =>
+      M2_RE.test(s) &&
+      !/\b(?:key|clave)\s?-?\s?E\b|\bE[\s-]?key\b|wi-?fi|wlan/i.test(s),
+  );
+  const rest = segments.filter((s) => !m2.includes(s)).join("; ");
+  const m2Text = m2.join("; ");
+  const keys = new Set(m2.map(keyOf).filter((k) => k !== null));
+  return {
+    m2: m2.length > 0,
+    lengths: [...new Set(m2Text.match(M2_LENGTH_RE) ?? [])].map(Number),
+    interfaces: interfacesOf(m2Text),
+    key: keys.size === 1 ? [...keys][0] : null,
+    bays: new Set([...rest.matchAll(BAY_RE)].map((m) => `${m[1]}.5`)),
+    sata: /\bSATA/i.test(rest),
+  };
+}
+const formLabel = (f: DriveForm) =>
+  f.kind === "M.2"
+    ? `M.2${f.length ? ` ${f.length}` : ""}`
+    : `de ${f.kind} pulgadas`;
+function storageRules(input: RuleInput): RuleResult[] {
+  const eq = equipmentText(input);
+  const slots = storageSlots(input.equipment.board);
+  const type = equipmentType(eq);
+  const form = componentFact(input, driveForm);
+  const iface = componentFact(input, driveInterface);
+  const shapeLabel = "Formato de la unidad";
+  let shape: RuleResult;
+  if (!form)
+    shape = rule(
+      "storage-form-factor",
+      shapeLabel,
+      "unknown",
+      "No se indicó el formato de la unidad: M.2 (2230, 2242 o 2280) o 2.5/3.5 pulgadas.",
+    );
+  else if (form.value.kind === "M.2") {
+    const length = form.value.length;
+    const lengths = slots.lengths.map((l) => `M.2 ${l}`).join("/");
+    if (!slots.m2)
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "unknown",
+        "Los datos del equipo no indican ranuras M.2. Indique la ranura y las longitudes que admite (por ejemplo, M.2 2242/2280).",
+        form.source,
+      );
+    else if (!length)
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "unknown",
+        "No se indicó la longitud del módulo M.2 (2230, 2242 o 2280).",
+        form.source,
+      );
+    else if (!slots.lengths.length)
+      shape = rule(
+        "storage-form-factor",
+        shapeLabel,
+        "warn",
+        `El equipo tiene ranura M.2, pero no indica qué longitudes admite. Confirme en el manual que acepta M.2 ${length}.`,
+        form.source,
+      );
+    else
+      shape = slots.lengths.includes(length)
+        ? rule(
+            "storage-form-factor",
+            shapeLabel,
+            "pass",
+            `La unidad M.2 ${length} cabe en la ranura ${lengths} del equipo.`,
+            form.source,
+          )
+        : rule(
+            "storage-form-factor",
+            shapeLabel,
+            "fail",
+            `La unidad es M.2 ${length} y la ranura del equipo admite ${lengths}. No encaja físicamente.`,
+            form.source,
+          );
+  } else {
+    const size = form.value.kind;
+    shape = slots.bays.has(size)
+      ? rule(
+          "storage-form-factor",
+          shapeLabel,
+          "pass",
+          `El equipo indica bahías de ${size} pulgadas.`,
+          form.source,
+        )
+      : rule(
+          "storage-form-factor",
+          shapeLabel,
+          type ? "warn" : "unknown",
+          type === "laptop" && size === "3.5"
+            ? "Una unidad de 3.5 pulgadas no suele caber en un portátil. Confirme en el manual qué unidades admite."
+            : `Los datos del equipo no indican bahías de ${size} pulgadas. Confirme que tenga una libre antes de comprar.`,
+          form.source,
+        );
+  }
+  const ifaceLabel = "Interfaz de la unidad";
+  let link: RuleResult;
+  const name = (i: DriveInterface) => (i === "NVMe" ? "NVMe (PCIe)" : "SATA");
+  if (!iface)
+    link = rule(
+      "storage-interface",
+      ifaceLabel,
+      "unknown",
+      "No se indicó la interfaz de la unidad (SATA o NVMe/PCIe).",
+    );
+  else if (form?.value.kind === "M.2" || (!form && slots.m2)) {
+    const offered = [...slots.interfaces];
+    link = !offered.length
+      ? rule(
+          "storage-interface",
+          ifaceLabel,
+          "unknown",
+          "Los datos del equipo no indican si su ranura M.2 es SATA o NVMe/PCIe.",
+          iface.source,
+        )
+      : slots.interfaces.has(iface.value)
+        ? rule(
+            "storage-interface",
+            ifaceLabel,
+            "pass",
+            `La unidad ${name(iface.value)} coincide con la ranura M.2 ${offered.map(name).join("/")} del equipo.`,
+            iface.source,
+          )
+        : rule(
+            "storage-interface",
+            ifaceLabel,
+            "fail",
+            `La unidad es ${name(iface.value)} y la ranura M.2 del equipo es ${offered.map(name).join("/")}. No funcionará en esa ranura.`,
+            iface.source,
+          );
+  } else
+    link =
+      iface.value === "SATA" && slots.sata
+        ? rule(
+            "storage-interface",
+            ifaceLabel,
+            "pass",
+            "El equipo indica puertos SATA para la unidad.",
+            iface.source,
+          )
+        : rule(
+            "storage-interface",
+            ifaceLabel,
+            "unknown",
+            `Los datos del equipo no indican puertos ${name(iface.value)}${form ? ` para una unidad ${formLabel(form.value)}` : ""}. Confírmelo en el manual.`,
+            iface.source,
+          );
+  const rules = [shape, link];
+  // The key is checked only when the equipment states it.
+  const key = componentFact(input, driveKey);
+  if (form?.value.kind === "M.2" && slots.key && key) {
+    const fits =
+      key.value === "B+M" || slots.key === "B+M" || key.value === slots.key;
+    rules.push(
+      rule(
+        "storage-key",
+        "Clave del conector M.2",
+        fits ? "pass" : "fail",
+        fits
+          ? `El conector M.2 clave ${key.value} encaja en la ranura clave ${slots.key}.`
+          : `La unidad usa conector M.2 clave ${key.value} y la ranura del equipo es clave ${slots.key}. No encaja.`,
+        key.source,
+      ),
+    );
+  }
+  return rules;
+}
 export function evaluateRules(input: RuleInput): RuleResult[] {
   switch (input.category) {
     case "RAM":
@@ -673,6 +901,8 @@ export function evaluateRules(input: RuleInput): RuleResult[] {
       return chargerRules(input);
     case "Batería":
       return batteryRules(input);
+    case "Almacenamiento":
+      return storageRules(input);
     default:
       return [];
   }
