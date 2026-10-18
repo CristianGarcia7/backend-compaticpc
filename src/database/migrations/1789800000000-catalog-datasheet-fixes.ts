@@ -27,13 +27,12 @@ export const rtx4090: CatalogEntry = {
   datasheetUrl:
     "https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/",
 };
+// Only a row still holding the expected link changes: an admin edit survives.
+const GUARDED_UPDATE = `UPDATE components SET "datasheetUrl"=$2 WHERE name=$1 AND "datasheetUrl" IS NOT DISTINCT FROM $3`;
 export class CatalogDatasheetFixes1789800000000 implements MigrationInterface {
   async up(q: QueryRunner) {
     for (const fix of datasheetFixes)
-      await q.query(`UPDATE components SET "datasheetUrl"=$2 WHERE name=$1`, [
-        fix.name,
-        fix.url,
-      ]);
+      await q.query(GUARDED_UPDATE, [fix.name, fix.url, fix.previous]);
     const c = rtx4090;
     await q.query(
       `INSERT INTO components(name,category,specifications,source,"datasheetUrl") SELECT $1::varchar,$2::varchar,$3::varchar,$4::varchar,$5::varchar WHERE NOT EXISTS (SELECT 1 FROM components WHERE name=$1::varchar)`,
@@ -42,10 +41,7 @@ export class CatalogDatasheetFixes1789800000000 implements MigrationInterface {
   }
   async down(q: QueryRunner) {
     for (const fix of datasheetFixes)
-      await q.query(`UPDATE components SET "datasheetUrl"=$2 WHERE name=$1`, [
-        fix.name,
-        fix.previous,
-      ]);
+      await q.query(GUARDED_UPDATE, [fix.name, fix.previous, fix.url]);
     // Only the row this migration inserted, never an admin-edited one.
     await q.query(
       "DELETE FROM components WHERE name=$1 AND specifications=$2 AND source=$3",

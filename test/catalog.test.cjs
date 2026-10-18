@@ -147,3 +147,17 @@ test("datasheet fixes down restores the previous links and removes only its own 
   assert.match(del.sql, /specifications/);
   assert.deepEqual(del.params.slice(0, 1), [rtx4090.name]);
 });
+test("R1 datasheet fixes only overwrite the exact link they expect, both ways", async () => {
+  const up = runner();
+  await new CatalogDatasheetFixes1789800000000().up(up);
+  const down = runner();
+  await new CatalogDatasheetFixes1789800000000().down(down);
+  for (const fix of datasheetFixes) {
+    const u = up.queries.find((x) => /^UPDATE/.test(x.sql) && x.params[0] === fix.name);
+    assert.match(u.sql, /"datasheetUrl" IS NOT DISTINCT FROM \$3/);
+    assert.deepEqual(u.params, [fix.name, fix.url, fix.previous]);
+    const d = down.queries.find((x) => /^UPDATE/.test(x.sql) && x.params[0] === fix.name);
+    assert.match(d.sql, /"datasheetUrl" IS NOT DISTINCT FROM \$3/);
+    assert.deepEqual(d.params, [fix.name, fix.previous, fix.url]);
+  }
+});
