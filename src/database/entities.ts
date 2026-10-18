@@ -34,6 +34,7 @@ export interface Analysis {
   provider: string;
   model: string;
   feedback: string | null;
+  feedbackReason: string | null;
   createdAt: Date;
 }
 export interface Session {
@@ -92,6 +93,7 @@ export const Analyses = new EntitySchema<Analysis>({
     provider: { type: String },
     model: { type: String },
     feedback: { type: String, nullable: true },
+    feedbackReason: { type: String, nullable: true },
     createdAt: { type: Date, createDate: true },
   },
 });

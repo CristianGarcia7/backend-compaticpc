@@ -125,3 +125,39 @@ test("a rule failure overrides a compatible Gemini verdict", async () => {
   assert.match(prompt, /catalogSpecifications/);
   assert.equal(prompt.includes("PRIVATE"), false);
 });
+test("Gemini failure falls back to a persisted rules result", async () => {
+  process.env.GEMINI_API_KEY = "test-key";
+  const saved = mockDb();
+  globalThis.fetch = async () => new Response("overloaded", { status: 503 });
+  const { Logger } = require("@nestjs/common");
+  const error = Logger.prototype.error;
+  Logger.prototype.error = () => {};
+  let row;
+  try {
+    row = await new AnalysesService().analyse(req, { ...body, mode: "gemini" });
+  } finally {
+    Logger.prototype.error = error;
+  }
+  assert.equal(row.provider, "rules");
+  assert.equal(row.model, "rules-v1");
+  assert.equal(row.result.verdict, "incompatible");
+  assert.match(row.result.fallback.reason, /503/);
+  assert.ok(row.result.rules.length >= 2);
+  assert.equal(saved.length, 1);
+});
+test("missing Gemini key also falls back instead of failing", async () => {
+  delete process.env.GEMINI_API_KEY;
+  mockDb();
+  globalThis.fetch = async () => {
+    throw new Error("network must not be used");
+  };
+  const row = await new AnalysesService().analyse(req, {
+    ...body,
+    specifications: "DIMM DDR5 16GB",
+    reference: "Memoria sin catálogo",
+    mode: "gemini",
+  });
+  assert.equal(row.provider, "rules");
+  assert.equal(row.result.verdict, "compatible");
+  assert.match(row.result.fallback.reason, /GEMINI_API_KEY/);
+});
