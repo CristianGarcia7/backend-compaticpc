@@ -6,14 +6,25 @@ import {
 import type { Request, Response } from "express";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
-import { askGemini, demoResult } from "../analyses/gemini.service";
+import {
+  AnalysisInput,
+  askGemini,
+  demoResult,
+  mergeRules,
+} from "../analyses/gemini.service";
+import { catalogWarnings, evaluateRules, matchCatalog } from "./rules";
 import {
   current,
   ownedAnalysis,
   parse,
   queryInput,
 } from "../common/api.service";
-import { Analyses, db, EquipmentRows } from "../database/data-source";
+import {
+  Analyses,
+  Components,
+  db,
+  EquipmentRows,
+} from "../database/data-source";
 @Injectable()
 export class AnalysesService {
   async analyse(req: Request, body: unknown) {
@@ -25,7 +36,11 @@ export class AnalysesService {
     if (!equipment) throw new NotFoundException("Equipo no encontrado.");
     if (input.mode === "demo" && process.env.DEMO_ENABLED !== "true")
       throw new ForbiddenException("La demostración está deshabilitada.");
-    const payload = {
+    const catalog = matchCatalog(
+      await db.getRepository(Components).find({ take: 500 }),
+      input.reference,
+    );
+    const payload: AnalysisInput = {
       equipment: {
         brand: equipment.brand,
         model: equipment.model,
@@ -34,9 +49,15 @@ export class AnalysesService {
       category: input.category,
       reference: input.reference,
       specifications: input.specifications,
+      catalog,
     };
+    // Rules run first: they feed the prompt and can override the model.
+    payload.rules = evaluateRules(payload);
+    const warnings = catalogWarnings(payload);
     const result =
-      input.mode === "demo" ? demoResult(payload) : await askGemini(payload);
+      input.mode === "demo"
+        ? demoResult(payload)
+        : mergeRules(await askGemini(payload), payload.rules, warnings);
     return db.getRepository(Analyses).save({
       ownerId: user.id,
       equipment,
@@ -121,8 +142,28 @@ export class AnalysesService {
       ["alternatives", "Alternativas"],
     ]) {
       doc.fontSize(14).text(title).fontSize(11);
-      for (const item of row.result[key]) doc.text(`- ${item}`);
+      for (const item of row.result[key] ?? []) doc.text(`- ${item}`);
       doc.moveDown();
+    }
+    // Older analyses were stored before rules and warnings existed.
+    const statusLabels: Record<string, string> = {
+      pass: "CUMPLE",
+      fail: "NO CUMPLE",
+      warn: "ATENCIÓN",
+      unknown: "SIN DATOS",
+    };
+    if (row.result.rules?.length) {
+      doc.fontSize(14).text("Reglas técnicas").fontSize(11);
+      for (const rule of row.result.rules)
+        doc.text(
+          `- [${statusLabels[rule.status] ?? rule.status}] ${rule.label}: ${rule.detail}${rule.source ? ` (Fuente: ${rule.source})` : ""}`,
+        );
+      doc.moveDown();
+    }
+    if (row.result.warnings?.length) {
+      doc.fontSize(14).fillColor("#a35b00").text("Advertencias").fontSize(11);
+      for (const warning of row.result.warnings) doc.text(`- ${warning}`);
+      doc.fillColor("#111827").moveDown();
     }
     doc
       .fontSize(9)

@@ -2,10 +2,13 @@ const { test, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   ResultSchema,
+  AnalysisResultSchema,
   demoResult,
   askGemini,
   modelPayload,
+  mergeRules,
 } = require("../dist/analyses/gemini.service");
+const { evaluateRules } = require("../dist/analyses/rules");
 const {
   hashPassword,
   verifyPassword,
@@ -27,6 +30,14 @@ const input = {
   category: "RAM",
   reference: "Memoria prueba",
   specifications: "DDR3 4GB",
+};
+// Plain Gemini output (no rules/warnings), as the provider returns it.
+const geminiOutput = {
+  verdict: "compatible",
+  summary: "La memoria parece compatible con el equipo indicado.",
+  checks: ["Generación revisada"],
+  risks: [],
+  alternatives: [],
 };
 const originalKey = process.env.GEMINI_API_KEY;
 const originalModel = process.env.GEMINI_MODEL;
@@ -70,6 +81,19 @@ test("request validation rejects oversized and missing fields", () => {
   );
   assert.throws(() => parse(queryInput, { equipmentId: "invalid" }));
 });
+test("battery and charger categories are accepted", () => {
+  for (const category of ["Batería", "Cargador"])
+    assert.equal(
+      parse(queryInput, {
+        equipmentId: "3ebf2fa2-8e8f-4c60-a144-1318a462e94a",
+        category,
+        reference: "Ref",
+        specifications: "65W",
+        mode: "demo",
+      }).category,
+      category,
+    );
+});
 test("Gemini payload excludes serial and owner even if caller supplies them", () => {
   const payload = modelPayload({
     ...input,
@@ -82,11 +106,47 @@ test("Gemini payload excludes serial and owner even if caller supplies them", ()
   assert.equal(JSON.stringify(payload).includes("PRIVATE"), false);
   assert.equal(payload.generationConfig.responseMimeType, "application/json");
 });
-test("explicit demo recognizes the curated DDR generation mismatch", () => {
+test("explicit demo uses the rules engine for the DDR generation mismatch", () => {
   const result = demoResult(input);
   assert.equal(result.verdict, "incompatible");
   assert.match(result.risks.join(" "), /DEMOSTRACIÓN/);
-  assert.equal(ResultSchema.safeParse(result).success, true);
+  assert.equal(
+    result.rules.find((r) => r.id === "ram-generation").status,
+    "fail",
+  );
+  assert.deepEqual(result.warnings, []);
+  assert.equal(AnalysisResultSchema.safeParse(result).success, true);
+});
+test("demo no longer returns a fixed placeholder for compatible data", () => {
+  const result = demoResult({
+    ...input,
+    equipment: { ...input.equipment, board: "Z790 DDR5" },
+    specifications: "DIMM DDR5 16GB",
+  });
+  assert.equal(result.verdict, "compatible");
+  assert.ok(result.checks.every((c) => !/Por verificar/.test(c)));
+});
+test("a rule failure forces incompatible even if Gemini says compatible", () => {
+  const rules = evaluateRules(input);
+  const merged = mergeRules(geminiOutput, rules, ["aviso"]);
+  assert.equal(merged.verdict, "incompatible");
+  assert.deepEqual(merged.rules, rules);
+  assert.deepEqual(merged.warnings, ["aviso"]);
+  assert.match(merged.checks[0], /Generación de memoria/);
+  assert.ok(merged.checks.length <= 8);
+  assert.equal(AnalysisResultSchema.safeParse(merged).success, true);
+});
+test("passing rules keep the Gemini verdict", () => {
+  const rules = [
+    { id: "x", label: "Regla", status: "pass", detail: "Correcta" },
+  ];
+  assert.equal(mergeRules(geminiOutput, rules, []).verdict, "compatible");
+});
+test("Gemini payload carries deterministic rule results as facts", () => {
+  const payload = modelPayload({ ...input, rules: evaluateRules(input) });
+  const text = payload.contents[0].parts[0].text;
+  assert.match(text, /deterministicChecks/);
+  assert.match(text, /ram-generation/);
 });
 test("demo does not assert compatibility from insufficient information", () => {
   assert.equal(
@@ -95,7 +155,8 @@ test("demo does not assert compatibility from insufficient information", () => {
   );
 });
 test("AI schema rejects unsupported verdict, extra fields and excessive arrays", () => {
-  const valid = demoResult(input);
+  const valid = geminiOutput;
+  assert.equal(ResultSchema.safeParse(valid).success, true);
   assert.equal(
     ResultSchema.safeParse({ ...valid, verdict: "probably" }).success,
     false,
@@ -141,7 +202,7 @@ test("timeout is a 504", async () => {
 });
 test("valid structured Gemini response is accepted with server-side key header", async () => {
   process.env.GEMINI_API_KEY = "test-key";
-  const expected = demoResult(input);
+  const expected = geminiOutput;
   const actual = await askGemini(input, async (url, options) => {
     assert.match(url, /generateContent$/);
     assert.equal(options.headers["x-goog-api-key"], "test-key");
@@ -167,7 +228,7 @@ test("Gemini uses the supported default and respects an explicit model override"
       );
       return Response.json({
         candidates: [
-          { content: { parts: [{ text: JSON.stringify(demoResult(input)) }] } },
+          { content: { parts: [{ text: JSON.stringify(geminiOutput) }] } },
         ],
       });
     });

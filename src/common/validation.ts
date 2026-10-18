@@ -26,6 +26,8 @@ export const categories = z.enum([
   "Procesador",
   "Tarjeta gráfica",
   "Fuente de poder",
+  "Batería",
+  "Cargador",
 ]);
 export const queryInput = z
   .object({
@@ -42,6 +44,12 @@ export const componentInput = z
     category: categories,
     specifications: text(3000),
     source: text(400),
+    // Official manufacturer page; only http(s) links are rendered.
+    datasheetUrl: z
+      .url({ protocol: /^https?$/ })
+      .max(500)
+      .nullable()
+      .optional(),
   })
   .strict();
 export function parse<T>(schema: z.ZodType<T>, body: unknown): T {
