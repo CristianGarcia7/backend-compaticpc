@@ -11,6 +11,7 @@ import {
 import { Initial1789770000000 } from "./migrations/1789770000000-initial";
 import { CatalogDatasheets1789780000000 } from "./migrations/1789780000000-catalog-datasheets";
 import { FeedbackReason1789790000000 } from "./migrations/1789790000000-feedback-reason";
+import { CatalogDatasheetFixes1789800000000 } from "./migrations/1789800000000-catalog-datasheet-fixes";
 export * from "./entities";
 export const db = new DataSource({
   type: "postgres",
@@ -20,6 +21,7 @@ export const db = new DataSource({
     Initial1789770000000,
     CatalogDatasheets1789780000000,
     FeedbackReason1789790000000,
+    CatalogDatasheetFixes1789800000000,
   ],
   synchronize: false,
   logging: false,
