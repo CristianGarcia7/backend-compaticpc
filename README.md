@@ -9,17 +9,18 @@ Frontend: [frontend-compaticpc](https://github.com/CristianGarcia7/frontend-comp
 - **Registro e inicio de sesión** con sesiones en cookie `httpOnly`; las contraseñas se guardan con `scrypt` y sal.
 - **Equipos**: cada usuario registra y edita sus computadores (marca, modelo y board).
 - **Análisis de compatibilidad con IA**: Gemini devuelve un veredicto (`compatible`, `conditional` o `incompatible`), qué se revisó, los riesgos y las alternativas. La respuesta se valida con **Zod** y se rechaza si no cumple el esquema.
-- **Reglas técnicas deterministas** antes de la IA: generación DDR3/DDR4/DDR5, formato DIMM/SO-DIMM según el tipo de equipo, socket del procesador (también inferido del chipset), capacidad de la fuente frente al TDP estimado, potencia/voltaje/conector del cargador y voltaje/Wh/celdas de la batería. Una regla fallida fuerza el veredicto `incompatible` aunque la IA diga lo contrario, y cada resultado incluye `rules` y `warnings`.
+- **Reglas técnicas deterministas** antes de la IA: generación DDR3/DDR4/DDR5, formato DIMM/SO-DIMM según el tipo de equipo, socket del procesador (también inferido del chipset), capacidad de la fuente frente al TDP estimado y a la potencia de sistema que exige el fabricante de la tarjeta gráfica (por ejemplo, 850 W para la RTX 4090), interfaz SATA/NVMe, clave M.2 y formato (M.2 2230/2242/2280, 2.5/3.5 pulgadas) del almacenamiento frente a la ranura del equipo, potencia/voltaje/conector del cargador y voltaje/Wh/celdas de la batería. El almacenamiento solo se marca incompatible cuando el equipo declara su ranura. Una regla fallida fuerza el veredicto `incompatible` aunque la IA diga lo contrario, y cada resultado incluye `rules` y `warnings`.
 - **Contraste con el catálogo**: si la referencia coincide con un componente del catálogo (nombre o número de parte), se usa su ficha técnica y se advierte cuando los datos ingresados la contradicen.
 - **Historial y feedback** de análisis, con **exportación a PDF** (pdfkit).
-- **Catálogo de componentes** administrado por usuarios con rol `admin`. Cada componente puede enlazar su ficha oficial (`datasheetUrl`); la migración `1789780000000-catalog-datasheets` corrige el catálogo existente por nombre (por ejemplo, la Kingston KF432C16BB1/8 es DIMM de escritorio) y añade cargadores y baterías reales.
+- **Catálogo de componentes** administrado por usuarios con rol `admin`. Cada componente puede enlazar su ficha oficial (`datasheetUrl`); la migración `1789780000000-catalog-datasheets` corrige el catálogo existente por nombre (por ejemplo, la Kingston KF432C16BB1/8 es DIMM de escritorio) y añade cargadores y baterías reales; `1789800000000-catalog-datasheet-fixes` reemplaza los enlaces vencidos de la Samsung 970 EVO Plus y la Crucial MX500 por sus fichas oficiales en PDF y añade la RTX 4090.
 - **Modo demo** opcional que responde solo con las reglas técnicas locales, para mostrar la app sin API key.
 
 ## 🔒 Seguridad
 
 - `helmet`, límite de 24 KB por petición y `Cache-Control: no-store`.
 - Validación del `Origin` en peticiones que modifican datos.
-- _Rate limiting_ por IP y tipo de ruta: autenticación, IA y general.
+- _Rate limiting_ por IP y tipo de ruta: autenticación, IA y general. La API confía en un único proxy (`trust proxy 1`, nginx), así que la IP es la del cliente y no la del proxy.
+- Cookie de sesión `HttpOnly`, `SameSite=Lax` y `Secure` cuando `NODE_ENV=production`.
 - Los datos del usuario se envían a la IA como datos, nunca como instrucciones. El serial y el propietario del equipo no se envían.
 - Si Gemini falla (sin clave, cuota, clave rechazada, modelo inexistente, tiempo de espera o salida inválida), la API responde 200 con el resultado de las **reglas técnicas** (`provider: "rules"`, `model: "rules-v1"`) y `result.fallback.reason` explica la causa al técnico. Nunca se inventa un veredicto de IA.
 - Los errores de Gemini se registran con el código HTTP y el cuerpo truncado; la clave de API se enmascara y nunca se escribe en los registros.

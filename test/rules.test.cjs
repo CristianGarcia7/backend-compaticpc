@@ -504,3 +504,362 @@ test("nit: 'sin PD' is not read as USB-C", () => {
   });
   assert.equal(rule(rules, "charger-connector").status, "pass");
 });
+// H2: the GPU manufacturer's required system power.
+const rm750x = {
+  name: "Corsair RM750x",
+  category: "Fuente de poder",
+  specifications: "750W, 80 Plus Gold, formato ATX, totalmente modular",
+  source: "Ficha técnica oficial Corsair",
+  datasheetUrl: "https://www.corsair.com/rm750x",
+};
+test("H2 RTX 4090 with an RM750x fails below NVIDIA's 850 W system power", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "ASUS",
+      model: "PRIME Z790-P",
+      board:
+        "ASUS PRIME Z790-P, escritorio ATX, socket LGA1700; CPU Core i5-12400F 117 W, GPU RTX 4090 450 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "",
+    catalog: rm750x,
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.equal(psu.status, "fail");
+  assert.match(psu.detail, /850 W/);
+  assert.match(psu.detail, /RTX 4090/);
+  assert.match(psu.source, /nvidia\.com\/en-us\/geforce\/graphics-cards\/40-series\/rtx-4090/);
+  assert.equal(verdict, "incompatible");
+});
+test("H2 RTX 4060 with an RM750x meets NVIDIA's 550 W and stays compatible", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "MSI",
+      model: "MAG B550 TOMAHAWK",
+      board: "B550 ATX; CPU Ryzen 5 5600X 65 W, GPU RTX 4060 115 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "",
+    catalog: rm750x,
+  });
+  assert.equal(rule(rules, "psu-capacity").status, "pass");
+  assert.match(rule(rules, "psu-capacity").detail, /550 W/);
+  assert.equal(verdict, "compatible");
+});
+test("H2 a recommended PSU stated in the text wins and is cited", () => {
+  for (const phrase of [
+    "fuente recomendada 850 W",
+    "recommended PSU 850W",
+    "850 W system power",
+  ]) {
+    const { rules } = run({
+      equipment: {
+        brand: "Personalizado",
+        model: "PC",
+        board: `B550 ATX; CPU Ryzen 5 5600X 65 W, GPU genérica 300 W, ${phrase}`,
+      },
+      category: "Fuente de poder",
+      reference: "Fuente 750W",
+      specifications: "750W 80 Plus Gold",
+    });
+    const psu = rule(rules, "psu-capacity");
+    assert.equal(psu.status, "fail", phrase);
+    assert.match(psu.detail, /850 W/, phrase);
+    assert.match(psu.source, /equipo registrado/, phrase);
+  }
+});
+test("H2 the recommendation phrase is never read as the PSU or GPU wattage", () => {
+  const { rules } = run({
+    equipment: { brand: "Personalizado", model: "PC", board: "B550 ATX" },
+    category: "Fuente de poder",
+    reference: "Fuente genérica",
+    specifications:
+      "1000W 80 Plus Gold; CPU Ryzen 5 5600X 65 W, GPU RTX 4090 (fuente recomendada 850 W)",
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.match(psu.detail, /fuente de 1000 W/);
+  assert.doesNotMatch(psu.detail, /GPU 850 W/);
+});
+test("H2 a known GPU without TDP still fails a PSU below its requirement", () => {
+  const { rules, verdict } = run({
+    equipment: { brand: "Personalizado", model: "PC", board: "Z790 ATX, GPU RTX 4090" },
+    category: "Fuente de poder",
+    reference: "EVGA 600 BR",
+    specifications: "600W",
+  });
+  assert.equal(rule(rules, "psu-capacity").status, "fail");
+  assert.equal(verdict, "incompatible");
+});
+test("H2 raw-sum failure and margin warning keep working with a recommendation", () => {
+  const below = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX, CPU Core i9-13900K 253W, GPU RTX 4090 450W",
+    },
+    category: "Fuente de poder",
+    reference: "Fuente",
+    specifications: "700W",
+  });
+  assert.equal(rule(below.rules, "psu-capacity").status, "fail");
+  assert.match(rule(below.rules, "psu-capacity").detail, /no alcanza el consumo estimado/);
+  const margin = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX, CPU Core i9-13900K 253W, GPU RTX 4090 450W",
+    },
+    category: "Fuente de poder",
+    reference: "Fuente",
+    specifications: "900W",
+  });
+  assert.equal(rule(margin.rules, "psu-capacity").status, "warn");
+});
+// H3: storage. Equipment texts come from the technical validation cases.
+const samsung970 = {
+  name: "Samsung 970 EVO Plus MZ-V7S1T0BW",
+  category: "Almacenamiento",
+  specifications:
+    "SSD NVMe M.2 2280, PCIe 3.0 x4, 1TB, lectura hasta 3500MB/s, escritura hasta 3300MB/s",
+  source: "Ficha técnica oficial Samsung",
+  datasheetUrl: null,
+};
+const primeZ790 = {
+  brand: "ASUS",
+  model: "PRIME Z790-P",
+  board:
+    "ASUS PRIME Z790-P, escritorio ATX, socket LGA1700, 4 ranuras DIMM DDR5, M.2 Key M 2242/2260/2280 PCIe 4.0 x4",
+};
+const thinkpadE14 = {
+  brand: "Lenovo",
+  model: "ThinkPad E14 Gen 4 (Intel)",
+  board:
+    "Portátil, 8 GB soldada + 1 ranura SO-DIMM DDR4-3200; adaptador 65 W USB-C PD 3.0; batería integrada Li-Polymer 57 Wh; 2 ranuras M.2 2242 PCIe NVMe",
+};
+const storage = (equipment, extra = {}) =>
+  run({
+    equipment,
+    category: "Almacenamiento",
+    reference: "Samsung 970 EVO Plus MZ-V7S1T0BW",
+    specifications: "",
+    catalog: samsung970,
+    ...extra,
+  });
+test("H3 an M.2 2280 NVMe SSD in an M.2 Key M 2242/2260/2280 PCIe slot is compatible", () => {
+  const { rules, verdict } = storage(primeZ790);
+  assert.equal(rule(rules, "storage-form-factor").status, "pass");
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(rule(rules, "storage-key").status, "pass");
+  assert.equal(verdict, "compatible");
+});
+test("H3 an M.2 2280 SSD in a laptop with only M.2 2242 slots is incompatible", () => {
+  const { rules, verdict } = storage(thinkpadE14);
+  const shape = rule(rules, "storage-form-factor");
+  assert.equal(shape.status, "fail");
+  assert.match(shape.detail, /2280/);
+  assert.match(shape.detail, /2242/);
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 a SATA M.2 B+M drive fails in a slot stated as PCIe/NVMe only", () => {
+  const { rules, verdict } = storage(primeZ790, {
+    reference: "SSD M.2 SATA genérico",
+    specifications: "SSD M.2 2280 SATA III, clave B+M, 512GB",
+    catalog: null,
+  });
+  assert.equal(rule(rules, "storage-interface").status, "fail");
+  assert.equal(rule(rules, "storage-key").status, "pass");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 an NVMe M-key drive fails in a slot stated as Key B SATA", () => {
+  const { rules, verdict } = storage({
+    brand: "Genérico",
+    model: "Mini PC",
+    board: "Mini PC, 1 ranura M.2 Key B 2280 SATA",
+  });
+  assert.equal(rule(rules, "storage-key").status, "fail");
+  assert.equal(rule(rules, "storage-interface").status, "fail");
+  assert.equal(verdict, "incompatible");
+});
+test("H3 equipment that does not state its storage slot never fails", () => {
+  for (const board of [
+    "Portátil, 2 ranuras SO-DIMM DDR4",
+    "escritorio ATX, socket AM4, 4 ranuras DIMM DDR4",
+    "MacBook Air M2, portátil",
+  ]) {
+    const { rules, verdict } = storage({ brand: "X", model: "Y", board });
+    assert.equal(rules.some((r) => r.status === "fail"), false, board);
+    assert.equal(verdict, "conditional", board);
+  }
+});
+test("H3 an M.2 slot without stated lengths or interface warns or is unknown", () => {
+  const { rules, verdict } = storage({
+    brand: "X",
+    model: "Y",
+    board: "escritorio ATX, 1 ranura M.2",
+  });
+  assert.notEqual(rule(rules, "storage-form-factor").status, "fail");
+  assert.equal(rule(rules, "storage-interface").status, "unknown");
+  assert.equal(verdict, "conditional");
+});
+test("H3 a 2.5-inch SATA SSD needs a stated bay and SATA port to pass", () => {
+  const mx500 = {
+    reference: "Crucial MX500 CT1000MX500SSD1",
+    catalog: {
+      name: "Crucial MX500 CT1000MX500SSD1",
+      category: "Almacenamiento",
+      specifications:
+        "SSD SATA III (6 Gb/s) 2.5 pulgadas, 1TB, 7mm de espesor, lectura hasta 560MB/s, escritura hasta 510MB/s",
+      source: "Ficha técnica oficial Crucial",
+      datasheetUrl: null,
+    },
+  };
+  const stated = storage(
+    {
+      brand: "MSI",
+      model: "MAG B550 TOMAHAWK",
+      board: "escritorio ATX, socket AM4, 6 puertos SATA 6Gb/s, bahías de 2.5 pulgadas",
+    },
+    mx500,
+  );
+  assert.equal(rule(stated.rules, "storage-form-factor").status, "pass");
+  assert.equal(rule(stated.rules, "storage-interface").status, "pass");
+  assert.equal(stated.verdict, "compatible");
+  const silent = storage(
+    { brand: "MSI", model: "MAG B550 TOMAHAWK", board: "escritorio ATX, socket AM4" },
+    mx500,
+  );
+  assert.equal(silent.rules.some((r) => r.status === "fail"), false);
+  assert.equal(silent.verdict, "conditional");
+});
+test("H3 a drive without form factor or interface is unknown", () => {
+  const { rules, verdict } = storage(primeZ790, {
+    reference: "SSD 1TB",
+    specifications: "1TB",
+    catalog: null,
+  });
+  assert.equal(rule(rules, "storage-form-factor").status, "unknown");
+  assert.equal(rule(rules, "storage-interface").status, "unknown");
+  assert.equal(verdict, "conditional");
+});
+// H4: case B2 of the technical validation (HP battery in a ThinkPad E14 Gen 4).
+test("H4 a Wh-only mismatch warns and asks for the part number and form factor", () => {
+  const { rules, verdict } = run({
+    equipment: thinkpadE14,
+    category: "Batería",
+    reference: "HP HT03XL L11119-855",
+    specifications: "",
+    catalog: {
+      name: "HP HT03XL L11119-855",
+      category: "Batería",
+      specifications:
+        "Batería Li-ion de 3 celdas, 41Wh, 3.6Ah, código HT03XL, número de parte L11119-855",
+      source: "Ficha técnica oficial HP",
+      datasheetUrl: null,
+    },
+  });
+  const capacity = rule(rules, "battery-capacity");
+  assert.equal(capacity.status, "warn");
+  assert.match(capacity.detail, /41 Wh/);
+  assert.match(capacity.detail, /57 Wh/);
+  assert.match(capacity.detail, /número de parte/);
+  assert.match(capacity.detail, /formato/);
+  assert.equal(rule(rules, "battery-voltage").status, "unknown");
+  assert.equal(verdict, "conditional");
+});
+// Review round 1: the PSU's own text never sets the GPU requirement.
+test("R1 a PSU that mentions an RTX 4090 does not impose the 4090 requirement", () => {
+  for (const specifications of [
+    "750W 80 Plus Gold, 12VHPWR compatible con RTX 4090",
+    "750W 80 Plus Gold, PSU recommended 850W",
+  ]) {
+    const { rules, verdict } = run({
+      equipment: {
+        brand: "Personalizado",
+        model: "PC",
+        board: "B650 ATX; CPU Ryzen 5 7600 65 W, GPU RTX 4070 200 W",
+      },
+      category: "Fuente de poder",
+      reference: "Fuente 750W",
+      specifications,
+    });
+    const psu = rule(rules, "psu-capacity");
+    assert.equal(psu.status, "pass", specifications);
+    assert.doesNotMatch(psu.detail, /850 W/, specifications);
+    assert.equal(verdict, "compatible", specifications);
+  }
+});
+test("R1 a lower text recommendation never undercuts NVIDIA's figure", () => {
+  const { rules, verdict } = run({
+    equipment: {
+      brand: "Personalizado",
+      model: "PC",
+      board: "Z790 ATX; CPU Core i5-12400F 117 W, GPU RTX 4090 450 W, fuente recomendada 650 W",
+    },
+    category: "Fuente de poder",
+    reference: "Corsair RM750x",
+    specifications: "750W",
+  });
+  const psu = rule(rules, "psu-capacity");
+  assert.equal(psu.status, "fail");
+  assert.match(psu.detail, /850 W/);
+  assert.equal(verdict, "incompatible");
+});
+// Review round 1: storage parsing.
+test("R1 a SATA token after a comma stays with its M.2 slot", () => {
+  const { rules, verdict } = storage(
+    {
+      brand: "X",
+      model: "Y",
+      board: "escritorio ATX, 1x M.2 2280 Key M supports PCIe 4.0 x4, SATA, 6 puertos SATA",
+    },
+    {
+      reference: "SSD M.2 SATA genérico",
+      specifications: "SSD M.2 2280 SATA III, clave B+M, 512GB",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-interface").status, "pass");
+  assert.equal(verdict, "compatible");
+});
+test("R1 'hasta 2280' admits every shorter M.2 length", () => {
+  const { rules } = storage(
+    { brand: "X", model: "Y", board: "escritorio ATX, M.2 Key M hasta 2280 PCIe 4.0" },
+    {
+      reference: "SSD 2242",
+      specifications: "SSD NVMe M.2 2242 PCIe 4.0 x4",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-form-factor").status, "pass");
+  const longer = storage(
+    { brand: "X", model: "Y", board: "Portátil, M.2 Key M up to 2242 PCIe NVMe" },
+  );
+  assert.equal(rule(longer.rules, "storage-form-factor").status, "fail");
+});
+test("R1 a shorter drive in a desktop slot listing only 2280 warns", () => {
+  const { rules, verdict } = storage(
+    { brand: "X", model: "Y", board: "escritorio ATX, M.2 Key M 2280 PCIe 4.0 x4" },
+    {
+      reference: "SSD 2230",
+      specifications: "SSD NVMe M.2 2230 PCIe 4.0 x4",
+      catalog: null,
+    },
+  );
+  assert.equal(rule(rules, "storage-form-factor").status, "warn");
+  assert.equal(verdict, "conditional");
+  // S2 stays incompatible: a longer drive than the laptop's 2242 slot.
+  assert.equal(storage(thinkpadE14).verdict, "incompatible");
+});
+test("R1 2.5-inch, 2.5 inch and 2,5 pulgadas are read as 2.5\"", () => {
+  for (const spec of ["SSD SATA 2.5-inch 1TB", "SSD SATA 2.5 inch 1TB", "SSD SATA 2,5 pulgadas 1TB"]) {
+    const { rules, verdict } = storage(
+      { brand: "X", model: "Y", board: "escritorio ATX, 4 puertos SATA, bahía 2.5-inch" },
+      { reference: "SSD genérico", specifications: spec, catalog: null },
+    );
+    assert.equal(rule(rules, "storage-form-factor").status, "pass", spec);
+    assert.equal(verdict, "compatible", spec);
+  }
+});

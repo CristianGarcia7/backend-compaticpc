@@ -96,3 +96,68 @@ test("component input accepts an optional http(s) datasheet URL only", () => {
     parse(componentInput, { ...base, datasheetUrl: "javascript:alert(1)" }),
   );
 });
+// H5: stale datasheet links (Samsung redirected to a generic page, Crucial 404).
+const {
+  CatalogDatasheetFixes1789800000000,
+  datasheetFixes,
+  rtx4090,
+} = require("../dist/database/migrations/1789800000000-catalog-datasheet-fixes");
+test("datasheet fix migration is registered after the feedback migration", () => {
+  const names = db.options.migrations.map((m) => m.name);
+  assert.ok(
+    names.indexOf("CatalogDatasheetFixes1789800000000") >
+      names.indexOf("FeedbackReason1789790000000"),
+  );
+});
+test("datasheet fixes replace both stale links with product-specific https URLs", async () => {
+  const q = runner();
+  await new CatalogDatasheetFixes1789800000000().up(q);
+  for (const name of [
+    "Samsung 970 EVO Plus MZ-V7S1T0BW",
+    "Crucial MX500 CT1000MX500SSD1",
+  ]) {
+    const fix = datasheetFixes.find((f) => f.name === name);
+    const before = catalog.find((c) => c.name === name).datasheetUrl;
+    assert.notEqual(fix.url, before);
+    assert.equal(fix.previous, before);
+    assert.match(fix.url, /^https:\/\//);
+    const update = q.queries.find(
+      (x) => /^UPDATE/.test(x.sql) && x.params[0] === name,
+    );
+    assert.equal(update.params[1], fix.url);
+    assert.match(update.sql, /"datasheetUrl"/);
+  }
+  assert.match(datasheetFixes[0].url + datasheetFixes[1].url, /970_EVO_Plus/);
+  assert.match(datasheetFixes[0].url + datasheetFixes[1].url, /mx500/);
+  const insert = q.queries.find((x) => /^INSERT/.test(x.sql));
+  assert.match(insert.sql, /NOT EXISTS/);
+  assert.equal(insert.params[0], rtx4090.name);
+  assert.match(rtx4090.specifications, /fuente recomendada 850W/);
+});
+test("datasheet fixes down restores the previous links and removes only its own row", async () => {
+  const q = runner();
+  await new CatalogDatasheetFixes1789800000000().down(q);
+  for (const fix of datasheetFixes) {
+    const update = q.queries.find(
+      (x) => /^UPDATE/.test(x.sql) && x.params[0] === fix.name,
+    );
+    assert.equal(update.params[1], fix.previous);
+  }
+  const del = q.queries.find((x) => /^DELETE/.test(x.sql));
+  assert.match(del.sql, /specifications/);
+  assert.deepEqual(del.params.slice(0, 1), [rtx4090.name]);
+});
+test("R1 datasheet fixes only overwrite the exact link they expect, both ways", async () => {
+  const up = runner();
+  await new CatalogDatasheetFixes1789800000000().up(up);
+  const down = runner();
+  await new CatalogDatasheetFixes1789800000000().down(down);
+  for (const fix of datasheetFixes) {
+    const u = up.queries.find((x) => /^UPDATE/.test(x.sql) && x.params[0] === fix.name);
+    assert.match(u.sql, /"datasheetUrl" IS NOT DISTINCT FROM \$3/);
+    assert.deepEqual(u.params, [fix.name, fix.url, fix.previous]);
+    const d = down.queries.find((x) => /^UPDATE/.test(x.sql) && x.params[0] === fix.name);
+    assert.match(d.sql, /"datasheetUrl" IS NOT DISTINCT FROM \$3/);
+    assert.deepEqual(d.params, [fix.name, fix.previous, fix.url]);
+  }
+});

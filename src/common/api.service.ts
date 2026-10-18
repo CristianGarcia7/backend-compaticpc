@@ -39,21 +39,28 @@ export async function ownedAnalysis(req: Request, id: string) {
   if (!row) throw new NotFoundException("Consulta no encontrada.");
   return row;
 }
-export const cookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
-  path: "/api",
-  maxAge: 1000 * 60 * 60 * 12,
-};
+const SESSION_MAX_AGE = 1000 * 60 * 60 * 12;
+// Read at call time so NODE_ENV loaded after import (dotenv) still applies.
+// Secure only in production: local development runs over plain http.
+export function sessionCookieOptions(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: env.NODE_ENV === "production",
+    path: "/api",
+    maxAge: SESSION_MAX_AGE,
+  };
+}
 export async function setSession(res: Response, user: User) {
   const token = randomBytes(32).toString("base64url");
   await db.getRepository(Sessions).delete({ expiresAt: LessThan(new Date()) });
   await db.getRepository(Sessions).save({
     id: sessionHash(token),
     userId: user.id,
-    expiresAt: new Date(Date.now() + cookieOptions.maxAge),
+    expiresAt: new Date(Date.now() + SESSION_MAX_AGE),
   });
-  res.cookie("compatipc_session", token, cookieOptions);
+  res.cookie("compatipc_session", token, sessionCookieOptions());
   return publicUser(user);
 }

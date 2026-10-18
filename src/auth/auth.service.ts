@@ -11,11 +11,11 @@ import {
   verifyPassword,
 } from "../auth/password.service";
 import {
-  cookieOptions,
   credentials,
   current,
   parse,
   registration,
+  sessionCookieOptions,
   setSession,
 } from "../common/api.service";
 import { db, Sessions, Users } from "../database/data-source";
@@ -59,7 +59,7 @@ export class AuthService {
     const token = req.cookies?.compatipc_session;
     if (typeof token === "string")
       await db.getRepository(Sessions).delete({ id: sessionHash(token) });
-    res.clearCookie("compatipc_session", cookieOptions);
+    res.clearCookie("compatipc_session", sessionCookieOptions());
     return { ok: true };
   }
   async me(req: Request) {
